@@ -1,0 +1,11 @@
+(ns fawltypoly.cursor
+  "This is a port (and extension) of a Python script I have to generate Angular Momentum Probability Surfaces (AMPS). I'm really looking forward to seeing how this all works with a REPL!"
+  ;; TODO: Maybe this should be moved under a `gui` submodule.
+  (:import bpy
+           math))
+
+(defn reset-cursor!
+  ""
+  []
+  (set! (-> bpy.context/scene .-cursor .-location)
+        [0,0,0]))

@@ -1,0 +1,13 @@
+(ns fawltypoly.layout
+  "For general object setup, arrangement and tear down."
+  (:require [fawltypoly.object :as obj])
+  (:import bpy
+           math))
+
+(defn clear-meshes []
+  (obj/deselect)
+  (obj/select-type :mesh)
+  (obj/delete))
+
+(.getcwd os)
+(require '[fawltypoly.fawltypoly.object])

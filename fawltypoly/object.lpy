@@ -1,0 +1,60 @@
+(ns fawltypoly.object
+  "For manipulating blender meshes and similar types."
+  (:import bpy
+           math))
+
+(defn return
+  "Retrieves the named object reference, for further manipulation."
+  [name]
+  (.get (.-objects bpy/data) name))
+
+(defn select
+  "Make the chosen object active. Selects all objects if no name is given."
+  ([]
+   (.select_all bpy.ops/object ** :action "SELECT"))
+  ([name]
+   (.select_set (return name)  ** :state true)))
+
+(defn select-type
+  "'Selects' all things of the type `type`, a string that can be
+  - :mesh
+  - ...
+  "
+  [type]
+  (case type
+    :mesh (.select-by-type bpy.ops/object ** :type "MESH")))
+
+(defn deselect
+  "Make the chosen object active. Selects all objects if no name is given."
+  ([]
+   (.select-all     bpy.ops/object ** :action "DESELECT"))
+  ([name]))
+
+(defn move
+  "Sets the location of the object."
+  ;; TODO: check that the object exists first.
+  [name location]
+  (set! (-> (return name) .-location) location))
+
+(defn rotate
+  "Sets the Euler rotation vector."
+  [name rotation]
+  (set! (-> (return name) .-rotation_euler) rotation))
+
+(defn delete
+  "Removes the object completely."
+  [name]
+  (deselect)
+  (select name)
+  (.delete bpy.ops/object))
+
+(comment
+  (deselect)
+  (select)
+  (select-type :mesh)
+
+  (.chdir os "/home/ctw/Python/fawltypoly")
+  (.getcwd os)
+  (import glob)
+  (.glob glob "**/*.lpy")
+  (require '[layout :as layout]))
