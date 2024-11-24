@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "fawltypoly"
+version = "0.1.0"
+description = ""
+authors = ["clark.thomaswilliam@zoho.eu"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+basilisp-blender = "^0.3.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
