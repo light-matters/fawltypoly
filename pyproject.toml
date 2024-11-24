@@ -2,7 +2,7 @@
 name = "fawltypoly"
 version = "0.1.0"
 description = ""
-authors = [ctw <clark.thomaswilliam@zoho.eu>]
+authors = [John Smith <clark.thomaswilliam@zoho.eu>]
 readme = "README.md"
 
 [tool.poetry.dependencies]
