@@ -4,9 +4,61 @@
            math))
 
 (defn return
-  "Retrieves the named object reference, for further manipulation."
+  "Retrieves the named (or active) object reference, for further manipulation."
+  ([] (-> bpy/context
+          .-active_object))
+  ([name]
+   (.get (.-objects bpy/data) name)))
+
+(defn name-active
+  "Labels the 'active' object."
   [name]
-  (.get (.-objects bpy/data) name))
+  (set! (-> (return)
+            .-name)
+        name))
+
+(defn name-mesh
+  "Labels the 'active' object's mesh. (`name`+'_mesh')"
+  [name] (set! (.-data (return))
+               (str name "_mesh")))
+
+(defn add
+  "Put a new object in the scene."
+  [& {:keys [type
+             name
+             location
+             rotation
+             scale]
+      :or {type :plane
+           name "light"
+           location [0.0 0.0 0.0]
+           rotation [0.0 0.0 0.0]
+           scale [1.0 1.0 1.0]}}]
+
+  (case type
+    :plane (do (.primitive_plane_add bpy.ops/mesh **
+                                     :location location
+                                     :rotation rotation
+                                     :scale scale)
+               (name-active name)
+               (name-mesh name))
+    :default (tap> "Supplied type isn't implemented. Please contact the library maintainers if this is unexpected.")))
+
+(defn materials
+  "The materials available or the materials currently assigned to the given object."
+  ;; TODO: Should maybe also accept the name of an object
+  ([] (-> bpy/data .-materials))
+  ([object]
+   (-> object .-data .-materials)))
+
+(defn assign-material
+  "Attaches the suggested 'material' to the supplied object."
+  [object name]
+  (let [m (-> (materials)
+              (.get name))
+        mo (materials object)]
+    (if m (aset mo 0 m)
+        (.append mo m))))
 
 (defn select
   "Make the chosen object active. Selects all objects if no name is given."
@@ -43,6 +95,7 @@
 
 (defn delete
   "Removes the object completely."
+  ;; TODO: Check that the object exists.
   [name]
   (deselect)
   (select name)
@@ -59,6 +112,9 @@
   (select)
   (select-type :mesh)
 
+  (add :location [10.0 5.0 0.0])
+
+  (import os)
   (.chdir os "/home/ctw/Python/fawltypoly")
   (.getcwd os)
   (import glob)
