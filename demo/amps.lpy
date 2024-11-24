@@ -1,0 +1,4 @@
+(ns fawltypoly.demo
+  "This is a port (and extension) of a Python script I have to generate Angular Momentum Probability Surfaces (AMPS). I'm really looking forward to seeing how this all works with a REPL!"
+  (:import bpy
+           math))

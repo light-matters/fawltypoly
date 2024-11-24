@@ -48,6 +48,12 @@
   (select name)
   (.delete bpy.ops/object))
 
+(defn apply_transforms
+  "Make all of the initiated `position`, `rotation`, `properties` and `scale` changes happen! - if they haven't already."
+  []
+  (.transform_apply bpy.ops/object
+                    ** :rotation true :location true :properties true :scale true))
+
 (comment
   (deselect)
   (select)

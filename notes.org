@@ -1,0 +1,5 @@
+#+title: Notes
+
+* * Problems
+** accessing prop collection
+had issues accessing (by index and by name)
