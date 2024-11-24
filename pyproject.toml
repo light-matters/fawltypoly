@@ -9,6 +9,9 @@ readme = "README.md"
 python = "^3.10"
 basilisp-blender = "^0.3.0"
 
+[tool.poetry.packages]
+packages = [{ include = "fawltypoly" }]
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
