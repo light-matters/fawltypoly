@@ -1,4 +1,4 @@
-(ns fawltypoly.layout
+(ns fawltypoly.scene
   "For general object setup, arrangement and tear down."
   (:require [fawltypoly.object :as obj])
   (:import bpy

@@ -100,7 +100,8 @@
   [name]
   (deselect)
   (select name)
-  (.delete bpy.ops/object))
+  ;; (.delete bpy.ops/object)
+  )
 
 (defn apply_transforms
   "Make all of the initiated `position`, `rotation`, `properties` and `scale` changes happen! - if they haven't already."
@@ -115,9 +116,12 @@
 
   (add :location [10.0 5.0 0.0])
 
+  (import sys)
+  (.-path sys)
+  (.append (.- sys path) "/home/ctw/projects/fawltypoly")
   (import os)
   (.chdir os "/home/ctw/Python/fawltypoly")
   (.getcwd os)
   (import glob)
   (.glob glob "**/*.lpy")
-  (require '[layout :as layout]))
+  (require '[scene :as scene]))

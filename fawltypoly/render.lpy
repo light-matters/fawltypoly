@@ -1,0 +1,10 @@
+(ns fawltypoly.render
+  "For extracting images and video from the scene."
+  (:require [fawltypoly.scene :as scene])
+  (:import bpy))
+
+(defn image [path]
+  (set! (-> (scene/scene) .-render .-filepath)
+        path)
+  (bpy.ops.render/render ** :write_still true))
+

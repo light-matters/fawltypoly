@@ -4,7 +4,7 @@
 
 (defn materials
   "The materials available or the materials currently assigned to the given object."
-  ;; TODO: WIP
+  ;; TODO: WIP:
   ;; TODO: Should maybe also accept the name of an object
   ([] (-> bpy/data .-materials))
   ([object]
@@ -35,12 +35,15 @@
 
      (set! (-> emission
                .-inputs
-               .-Strength
+               (.get "Strength")
                .-default_value)
            80)
-     (node-tree.links/new (-> .-output inputs "Surface")))))
+     (-> node-tree .-links (.new (-> output .-inputs (.get "Surface"))
+                                 (-> emission .-outputs
+                                     (.get "Emission")))))))
 
 (comment
+  (create-light)
   (-> (materials)
       first
       .-node_tree))

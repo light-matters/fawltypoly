@@ -1,0 +1,10 @@
+(ns fawltypoly.camera
+  (:require [fawltypoly.scene :as scene]))
+
+(defn set-camera
+  "Positions the camera at a particular rotation angle."
+  [camera location rotation]
+  (set! (-> (scene/scene) .-camera .-location)
+        location)
+  (set! (-> (scene/scene) .-camera .-rotation_euler)
+        rotation))
