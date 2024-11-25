@@ -1,14 +1,21 @@
 (ns fawltypoly.object
   "For manipulating blender meshes and similar types."
+  ;; (:require [fawltypoly.material :as material])
+  (:require [fawltypoly.material :as material])
   (:import bpy
            math))
+
+;; TODO: Implement protocol for prop collection
+
+(defn objects []
+  (.-objects bpy/data))
 
 (defn return
   "Retrieves the named (or active) object reference, for further manipulation."
   ([] (-> bpy/context
           .-active_object))
   ([name]
-   (.get (.-objects bpy/data) name)))
+   (.get (objects) name)))
 
 (defn name-active
   "Labels the 'active' object."
@@ -26,39 +33,33 @@
   "Put a new object in the scene."
   [& {:keys [type
              name
+             name__material
              location
              rotation
              scale]
       :or {type :plane
            name "light"
+           name__material nil
            location [0.0 0.0 0.0]
            rotation [0.0 0.0 0.0]
            scale [1.0 1.0 1.0]}}]
 
   (case type
-    :plane (do (.primitive_plane_add bpy.ops/mesh **
-                                     :location location
-                                     :rotation rotation
-                                     :scale scale)
-               (name-active name)
-               (name-mesh name))
-    :default (tap> "Supplied type isn't implemented. Please contact the library maintainers if this is unexpected.")))
+    :plane (.primitive_plane_add bpy.ops/mesh **
+                                 :location location
+                                 :rotation rotation
+                                 :scale scale)
+    :sphere (.primitive_uv_sphere_add bpy.ops/mesh **
+                                      :location location
+                                      :rotation rotation
+                                      :scale scale)
 
-(defn materials
-  "The materials available or the materials currently assigned to the given object."
-  ;; TODO: Should maybe also accept the name of an object
-  ([] (-> bpy/data .-materials))
-  ([object]
-   (-> object .-data .-materials)))
+    :default (tap> "Supplied type isn't implemented. Please contact the library maintainers if this is unexpected."))
 
-(defn assign-material
-  "Attaches the suggested 'material' to the supplied object."
-  [object name]
-  (let [m (-> (materials)
-              (.get name))
-        mo (materials object)]
-    (if m (aset mo 0 m)
-        (.append mo m))))
+  (name-active name)
+  (name-mesh name)
+  (when name__material
+    (material/assign-material (return name) name__material)))
 
 (defn select
   "Make the chosen object active. Selects all objects if no name is given."

@@ -3,3 +3,5 @@
 * * Problems
 ** accessing prop collection
 had issues accessing (by index and by name)
+** Python path
+The package root is not necessarily on the Python path and so requiring other namespaces can be a problem

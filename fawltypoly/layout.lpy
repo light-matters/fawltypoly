@@ -5,9 +5,13 @@
            math))
 
 (defn clear-meshes []
+  ;; TODO: WIP
   (obj/deselect)
   (obj/select-type :mesh)
-  (obj/delete))
+  ;; (obj/delete)
+  )
 
-(.getcwd os)
-(require '[fawltypoly.fawltypoly.object])
+(defn scene
+  ""
+  []
+  (.-scene bpy/context))
