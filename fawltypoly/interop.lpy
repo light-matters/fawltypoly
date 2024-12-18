@@ -1,0 +1,27 @@
+(ns fawltypoly.interop
+  "For manipulating blender meshes and similar types."
+  (:refer-clojure :exclude [get])
+  (:import bpy))
+
+(defn debug [content]
+  (let [fname "log.txt"
+        f (python/eval (str "open('" fname "', 'a')"))]
+    (try
+      (.write f (str content "\n\n"))
+      (finally (.close f)))))
+
+(defn get
+  "Retrieve the value associated with the given key from a collection.
+   Supports bpy_prop_collection, dictionaries, and other types."
+  [m key & [default]]
+  (let [bpy-prop-collection-type (python/getattr (python/getattr bpy "types") "bpy_prop_collection")]
+    (cond
+      (instance? bpy-prop-collection-type m)
+      (let [result (.get m key)]
+        (if (nil? result) default result))
+
+      (python/hasattr m "get")
+      (.get m key default)
+
+      :else
+      (throw (python/TypeError (str "Unsupported type for get: " (type m)))))))

@@ -1,14 +1,20 @@
 (ns fawltypoly.object
   "For manipulating blender meshes and similar types."
-  ;; (:require [fawltypoly.material :as material])
-  (:require [fawltypoly.material :as material])
+  (:require [fawltypoly.material :as material]
+            [fawltypoly.interop :as i])
   (:import bpy
            math))
 
-;; TODO: Implement protocol for prop collection
+;; TODO:
+;; - Implement protocol for prop collection
+;; - How do print something to stdout while the server is running?
 
 (defn objects []
   (.-objects bpy/data))
+
+(get (objects) "Cube")
+
+(i/get {:a 34} :a)
 
 (defn return
   "Retrieves the named (or active) object reference, for further manipulation."
@@ -118,7 +124,7 @@
 
   (import sys)
   (.-path sys)
-  (.append (.- sys path) "/home/ctw/projects/fawltypoly")
+  (.append (.- sys path) "/home/ctw/Python/fawltypoly")
   (import os)
   (.chdir os "/home/ctw/Python/fawltypoly")
   (.getcwd os)

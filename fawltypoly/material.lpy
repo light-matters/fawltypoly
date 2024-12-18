@@ -2,22 +2,22 @@
   "For dealing with mesh surface properties."
   (:import bpy))
 
-(defn materials
-  "The materials available or the materials currently assigned to the given object."
-  ;; TODO: WIP:
-  ;; TODO: Should maybe also accept the name of an object
-  ([] (-> bpy/data .-materials))
-  ([object]
-   (-> object .-data .-materials)))
+;; (defn materials
+;;   "The materials available or the materials currently assigned to the given object."
+;;   ;; TODO: WIP:
+;;   ;; TODO: Should maybe also accept the name of an object
+;;   ([] (-> bpy/data .-materials))
+;;   ([object]
+;;    (-> object .-data .-materials)))
 
-(defn assign-material
-  "Attaches the suggested 'material' to the supplied object."
-  [object name]
-  (let [m (-> (materials)
-              (.get name))
-        mo (materials object)]
-    (if m (aset mo 0 m)
-        (.append mo m))))
+;; (defn assign-material
+;;   "Attaches the suggested 'material' to the supplied object."
+;;   [object name]
+;;   (let [m (-> (materials)
+;;               (.get name))
+;;         mo (materials object)]
+;;     (if m (aset mo 0 m)
+;;         (.append mo m))))
 
 (defn create-light
   ([] (create-light "light"))
