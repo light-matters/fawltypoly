@@ -12,9 +12,7 @@
 (defn objects []
   (.-objects bpy/data))
 
-(get (objects) "Cube")
-
-(i/get {:a 34} :a)
+(i/get (objects) "Cube")
 
 (defn return
   "Retrieves the named (or active) object reference, for further manipulation."
@@ -64,8 +62,10 @@
 
   (name-active name)
   (name-mesh name)
-  (when name__material
-    (material/assign-material (return name) name__material)))
+  ;; TODO:
+  ;; (when name__material
+  ;;   (material/assign-material (return name) name__material))
+  )
 
 (defn select
   "Make the chosen object active. Selects all objects if no name is given."
