@@ -1,5 +1,5 @@
 (ns fawltypoly.interop
-  "For manipulating blender meshes and similar types."
+  "For dealing with special types and circumstances introduced by the Blender system."
   (:refer-clojure :exclude [get])
   (:import bpy))
 
