@@ -1,7 +1,9 @@
 (ns fawltypoly.interop
   "For dealing with special types and circumstances introduced by the Blender system."
-  (:refer-clojure :exclude [get])
+  (:refer-basilisp :exclude [get])
   (:import bpy))
+
+;; TODO: try basilisp.core instead of clojure.core for referring to the base implementation
 
 (defn debug
   "Currently necessary because stdout is"
@@ -24,6 +26,6 @@
 
       :else
       (try
-        (clojure.core/get m k)
+        (basilisp.core/get m k)
         (catch Exception e
           (throw (python/TypeError (str "Unsupported type for get: " (type m)))))))))

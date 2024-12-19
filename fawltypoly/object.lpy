@@ -12,8 +12,6 @@
 (defn objects []
   (.-objects bpy/data))
 
-(i/get (objects) "Cube")
-
 (defn return
   "Retrieves the named (or active) object reference, for further manipulation."
   ([] (-> bpy/context
@@ -121,6 +119,9 @@
   (select-type :mesh)
 
   (add :location [10.0 5.0 0.0])
+
+  (i/get {:a 5} :a)
+  (i/get (objects) "Cube")
 
   (import sys)
   (.-path sys)
