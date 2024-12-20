@@ -2,13 +2,13 @@
   "For dealing with mesh surface properties."
   (:import bpy))
 
-(defn materials
-  "The materials available or the materials currently assigned to the given object."
-  ;; TODO: WIP:
-  ;; TODO: Should maybe also accept the name of an object
-  ([] (-> bpy/data .-materials))
-  ([object]
-   (-> object .-data .-materials)))
+;; (defn materials
+;;   "The materials available or the materials currently assigned to the given object."
+;;   ;; TODO: WIP:
+;;   ;; TODO: Should maybe also accept the name of an object
+;;   ([] (-> bpy/data .-materials))
+;;   ([object]
+;;    (-> object .-data .-materials)))
 
 (defn node-info [material-name]
   (let [material (bpy.data.materials/get material-name)]  ; Get the material by name

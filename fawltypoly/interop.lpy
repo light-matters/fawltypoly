@@ -1,0 +1,31 @@
+(ns fawltypoly.interop
+  "For dealing with special types and circumstances introduced by the Blender system."
+  (:refer-basilisp :exclude [get])
+  (:import bpy))
+
+;; TODO: try basilisp.core instead of clojure.core for referring to the base implementation
+
+(defn debug
+  "Currently necessary because stdout is"
+  [content]
+  (let [fname "log.txt"
+        f (python/eval (str "open('" fname "', 'a')"))]
+    (try
+      (.write f (str content "\n\n"))
+      (finally (.close f)))))
+
+(defn get
+  "Retrieve the value associated with the given key from a collection.
+   Supports bpy_prop_collection, dictionaries, and other types."
+  [m k & [default]]
+  (let [bpy-prop-collection-type (python/getattr (python/getattr bpy "types") "bpy_prop_collection")]
+    (cond
+      (instance? bpy-prop-collection-type m)
+      (let [result (.get m k)]
+        (if (nil? result) default result))
+
+      :else
+      (try
+        (basilisp.core/get m k)
+        (catch Exception e
+          (throw (python/TypeError (str "Unsupported type for get: " (type m)))))))))
