@@ -10,6 +10,15 @@
   ([object]
    (-> object .-data .-materials)))
 
+(defn node-info [material-name]
+  (let [material (bpy.data.materials/get material-name)]  ; Get the material by name
+    (if (and material (.- material use_nodes))
+      (for [node (-> material
+                     (.- node_tree)
+                     (.- nodes))]
+        {:name (.- node name) :type (.- node bl_idname)})
+      (print "Material not found or does not use nodes."))))
+
 (defn assign-material
   "Attaches the suggested 'material' to the supplied object."
   [object name]
@@ -42,8 +51,66 @@
                                  (-> emission .-outputs
                                      (.get "Emission")))))))
 
+(defn create-surface-colour-map [name--cmap])
+
 (comment
   (create-light)
-  (-> (materials)
-      first
-      .-node_tree))
+  (def m (-> (materials)
+             second))
+  (-> m
+      (.- node_tree nodes))
+
+  (-> m
+      (.- use_nodes)))
+
+(defn new_math_node [nodes operation]
+  (case operation
+    :add (let
+          [nnew (.new nodes "ShaderNodeMath")]
+           (set! (.-operation nnew)
+                 "ADD"))
+    :square (let
+             [nnew (.new nodes "ShaderNodeMath")]
+              (set! (.-operation nnew)
+                    "POWER")
+              (set! (.-default_value (second (.-inputs nnew)))
+                    2.0))
+    :power (let
+            [nnew (.new nodes "ShaderNodeMath")]
+             (set! (.-operation nnew)
+                   "POWER"))))
+
+(comment
+  (let [material (bpy.data.materials/get "TEST")]
+    (set! (.- material use_nodes) true)
+
+    (let [nodes (-> material
+                    (.-node_tree)
+                    (.-nodes))]
+
+      (new_math_node nodes :add)
+;; (
+      ;; (.clear nodes)
+      ;; (let [nodes__new [:add
+      ;;                   :square
+      ;;                   :add
+      ;;                   :square
+      ;;                   :add
+      ;;                   :square
+      ;;                   :power]
+      ;;       nodes__maths (doseq [op nodes__new]
+      ;;                      (new_math_node nodes__new op))])
+
+;; Connect the nodes
+      ;; (let [links (.- (.- material node_tree) links)]
+      ;;   (.new links (nth (.- bsdf-node outputs) 0)
+      ;;         (nth (.- output-node inputs) 0))
+      ;;   (.new links (nth (.- color-ramp-node outputs) 0)
+      ;;         (nth (.- bsdf-node inputs) 0)))
+      )))
+
+(defn display-info-text [text]
+  (.call_menu (.-wm (.-ops bpy))  {:name "INFO_MT_operator"}))
+
+;; Example usage
+(display-info-text "Hello, Blender!")
