@@ -1,12 +1,12 @@
 (ns fawltypoly.interop
   "For dealing with special types and circumstances introduced by the Blender system."
   (:refer-basilisp :exclude [get])
+  (:require [clojure.core :as c])
   (:import bpy))
-
-;; TODO: try basilisp.core instead of clojure.core for referring to the base implementation
 
 (defn debug
   "Currently necessary because stdout is"
+  ;; TODO: Document `content`
   [content]
   (let [fname "log.txt"
         f (python/eval (str "open('" fname "', 'a')"))]
@@ -26,6 +26,10 @@
 
       :else
       (try
-        (basilisp.core/get m k)
+        (c/get m k)
         (catch Exception e
           (throw (python/TypeError (str "Unsupported type for get: " (type m)))))))))
+
+(comment
+  (get {"a" 5} "a")
+  (get {:a 5} :a))

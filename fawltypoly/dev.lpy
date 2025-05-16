@@ -1,0 +1,13 @@
+(ns dev)
+
+(defn reload []
+  (import os)
+  (.chdir os "/home/ctw/Python/fawltypoly")
+
+  (load-file "fawltypoly/interop.lpy")
+  (load-file "fawltypoly/object.lpy")
+
+  (require '[fawltypoly.object :as o] :reload)
+  (require '[fawltypoly.interop :as i] :reload))
+
+(comment (reload))

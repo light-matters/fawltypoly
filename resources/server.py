@@ -1,9 +1,7 @@
-#
-# For running inside the Blender application.
-# - Or to be added to the commandline call.
-#
 import sys
+import pathlib as pl
 
+sys.path.append(str(pl.Path.cwd()))
 sys.path.append(
     "~/.cache/pypoetry/virtualenvs/blender-3B2xtVHD-py3.12/lib/python3.12/site-packages"
 )
