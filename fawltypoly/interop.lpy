@@ -30,6 +30,6 @@
         (catch Exception e
           (throw (python/TypeError (str "Unsupported type for get: " (type m)))))))))
 
-(comment
-  (get {"a" 5} "a")
-  (get {:a 5} :a))
+#_(comment
+    (get {"a" 5} "a")
+    (get {:a 5} :a))

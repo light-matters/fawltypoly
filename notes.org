@@ -5,3 +5,35 @@
 had issues accessing (by index and by name)
 ** Python path
 The package root is not necessarily on the Python path and so requiring other namespaces can be a problem
+** Module loading (NameError: name 'basilisp_core' is not defined)
+Had some recurring and really weird problems regarding using a second module (interop) from another (object).
+
+Fundamentally,
+(get {:a 5} :a) worked from the interop namespace, but
+(i/get {:a 5} :a) in the object namespace caused the error.
+
+Following these steps below seems to resolve the issue but I don't understand why each is necessary.
+
+** What works
+*** start blender
+#+begin_src zsh
+cd  #Need to make sure that I'm in the home directory.
+blender
+#+end_src
+
+*** basilisp blender extension
+- set project dir to fawltypoly root
+- START SERVER
+
+*** Run these commands in the basilisp REPL
+ #+begin_src clojure
+    (import os)
+    (.chdir os "/home/ctw/Python/fawltypoly")
+    (load-file "fawltypoly/interop.lpy")
+    (load-file "fawltypoly/object.lpy")
+    (require '[fawltypoly.object :as o])
+    (require '[fawltypoly.interop :as i])
+
+    (i/get {:a 5} :a)
+ #+end_src
+** What doesn't

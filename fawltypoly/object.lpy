@@ -114,7 +114,6 @@
   (.transform_apply bpy.ops/object
                     ** :rotation true :location true :properties true :scale true))
 
-(def ^:private dev-notes nil)
 #_(comment
     (deselect)
     (select)
@@ -123,15 +122,26 @@
     (add :location [10.0 5.0 0.0])
     (delete "light")
 
-    (println "thing")
+    (import os)
+    (.chdir os "/home/ctw/Python/fawltypoly")
+    (load-file "fawltypoly/interop.lpy")
+    (load-file "fawltypoly/object.lpy")
 
+    (require '[fawltypoly.object :as o])
+    (require '[fawltypoly.interop :as i])
+
+    (println "thing")
     (i/get {:a 5} :a)
     (i/get (objects) "Cube")
-; In REPL
 
     (import sys)
     (.-path sys)
-    (.append (.- sys path) "/home/ctw/Python/fawltypoly")
+    (.append (.- sys path) "/home/ctw/Python")
+
+    (import fawltypoly.object)
+    (import importlib)
+    (.reload importlib "fawltypoly.object")
+
     (import os)
     (.chdir os "/home/ctw/Python/fawltypoly")
     (println (.getcwd os))
