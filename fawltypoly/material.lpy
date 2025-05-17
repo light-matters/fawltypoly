@@ -2,13 +2,11 @@
   "For dealing with mesh surface properties."
   (:import bpy))
 
-;; (defn materials
-;;   "The materials available or the materials currently assigned to the given object."
-;;   ;; TODO: WIP:
-;;   ;; TODO: Should maybe also accept the name of an object
-;;   ([] (-> bpy/data .-materials))
-;;   ([object]
-;;    (-> object .-data .-materials)))
+(defn available
+  "The materials available or the materials currently assigned to the given object."
+  ([] (-> bpy/data .-materials))
+  ([object]
+   (-> object .-data .-materials)))
 
 (defn node-info [material-name]
   (let [material (bpy.data.materials/get material-name)]  ; Get the material by name
@@ -19,14 +17,16 @@
         {:name (.- node name) :type (.- node bl_idname)})
       (print "Material not found or does not use nodes."))))
 
-(defn assign-material
+(defn assign
   "Attaches the suggested 'material' to the supplied object."
   [object name]
-  (let [m (-> (materials)
+  (let [m (-> (available)
               (.get name))
-        mo (materials object)]
-    (if m (aset mo 0 m)
-        (.append mo m))))
+        mo (available object)]
+
+    (if mo
+      (.append mo m)
+      (aset mo 0 m))))
 
 (defn create-light
   ([] (create-light "light"))
@@ -51,34 +51,24 @@
                                  (-> emission .-outputs
                                      (.get "Emission")))))))
 
-(defn create-surface-colour-map [name--cmap])
+;; (defn create-surface-colour-map [name--cmap])
 
-(comment
-  (create-light)
-  (def m (-> (materials)
-             second))
-  (-> m
-      (.- node_tree nodes))
-
-  (-> m
-      (.- use_nodes)))
-
-(defn new_math_node [nodes operation]
-  (case operation
-    :add (let
-          [nnew (.new nodes "ShaderNodeMath")]
-           (set! (.-operation nnew)
-                 "ADD"))
-    :square (let
-             [nnew (.new nodes "ShaderNodeMath")]
-              (set! (.-operation nnew)
-                    "POWER")
-              (set! (.-default_value (second (.-inputs nnew)))
-                    2.0))
-    :power (let
-            [nnew (.new nodes "ShaderNodeMath")]
-             (set! (.-operation nnew)
-                   "POWER"))))
+;; (defn new_math_node [nodes operation]
+;;   (case operation
+;;     :add (let
+;;           [nnew (.new nodes "ShaderNodeMath")]
+;;            (set! (.-operation nnew)
+;;                  "ADD"))
+;;     :square (let
+;;              [nnew (.new nodes "ShaderNodeMath")]
+;;               (set! (.-operation nnew)
+;;                     "POWER")
+;;               (set! (.-default_value (second (.-inputs nnew)))
+;;                     2.0))
+;;     :power (let
+;;             [nnew (.new nodes "ShaderNodeMath")]
+;;              (set! (.-operation nnew)
+;;                    "POWER"))))
 
 (comment
   (let [material (bpy.data.materials/get "TEST")]
@@ -109,8 +99,5 @@
       ;;         (nth (.- bsdf-node inputs) 0)))
       )))
 
-(defn display-info-text [text]
-  (.call_menu (.-wm (.-ops bpy))  {:name "INFO_MT_operator"}))
-
-;; Example usage
-(display-info-text "Hello, Blender!")
+;; (defn display-info-text [text]
+;;   (.call_menu (.-wm (.-ops bpy))  {:name "INFO_MT_operator"}))

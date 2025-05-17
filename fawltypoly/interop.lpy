@@ -1,6 +1,6 @@
 (ns fawltypoly.interop
   "For dealing with special types and circumstances introduced by the Blender system."
-  (:refer-basilisp :exclude [get])
+  (:refer-basilisp :exclude [get get-in])
   (:require [clojure.core :as c])
   (:import bpy))
 
@@ -13,6 +13,11 @@
     (try
       (.write f (str content "\n\n"))
       (finally (.close f)))))
+
+(defn ->hash
+  "Converts a bpy_collection-like thing to a hash map."
+  [bc]
+  (into {} (.items bc)))
 
 (defn get
   "Retrieve the value associated with the given key from a collection.
@@ -30,6 +35,40 @@
         (catch Exception e
           (throw (python/TypeError (str "Unsupported type for get: " (type m)))))))))
 
-#_(comment
-    (get {"a" 5} "a")
-    (get {:a 5} :a))
+(defn get-in
+  "Retrieves the value in a nested structure given a sequence of keys.
+   Handles bpy_prop_collection and falls back to basilisp.core/get-in for other types."
+  [m ks & [default]]
+  (let [bpy-prop-collection-type (python/getattr (python/getattr bpy "types") "bpy_prop_collection")]
+
+    (reduce
+     (fn [acc k]
+
+       ;; (println "===")
+       ;; (println acc)
+       ;; (println k)
+       ;; (println (python/hasattr acc k))
+       ;; (println "===")
+
+       (cond
+         (instance? bpy-prop-collection-type acc)
+         (let [result (.get acc k)]
+           (if (nil? result) default result))
+
+         (and (string? k) (python/hasattr acc k))
+         (python/getattr acc k)
+
+         (and acc (python/hasattr acc "get"))
+         (.get acc k default)
+
+         (coll? acc)
+         (try (nth acc k default)
+              (catch python/IndexError _ default))
+
+         :else default))
+     m ks)))
+
+(comment
+  (get {"a" 5} "a")
+  (get {:a 5} :a)
+  (println (get-in {:a {:b 5}} [:a :b])))

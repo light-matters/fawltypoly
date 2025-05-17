@@ -1,6 +1,7 @@
 (ns fawltypoly.object
   "For manipulating blender meshes and similar types."
-  (:require ;; [fawltypoly.material :as material]
+  (:require
+   [fawltypoly.material :as mat]
    [fawltypoly.interop :as i])
   (:import bpy
            math))
@@ -29,21 +30,24 @@
         name))
 
 (defn name-mesh!
-  "Labels the 'active' object's mesh. (`name`+'_mesh')"
-  [name] (set! (.-data (object))
-               (str name "_mesh")))
+  "Labels the 'active' or supplied object's mesh. (`name`+'_mesh')"
+  ([name] (set! (.-data (object))
+                (str name "_mesh")))
+  ([name object]
+   (set! (.-name (.-data object))
+         (str name "_mesh"))))
 
-(defn add
+(defn add!
   "Put a new object in the scene."
   [& {:keys [type
              name
-             name__material
+             name--material
              location
              rotation
              scale]
       :or {type :plane
            name "light"
-           name__material nil
+           name--material nil
            location [0.0 0.0 0.0]
            rotation [0.0 0.0 0.0]
            scale [1.0 1.0 1.0]}}]
@@ -61,11 +65,11 @@
     :default (tap> "Supplied type isn't implemented. Please contact the library maintainers if this is unexpected."))
 
   (name-active! name)
-  (name-mesh! name)
-  ;; TODO:
-  ;; (when name__material
-  ;;   (material/assign-material (return name) name__material))
-  )
+  (name-mesh! name (object name))
+  (when name--material
+    (mat/assign (object name) name--material))
+
+  (object name))
 
 (defn select
   "Make the chosen object active. Selects all objects if no name is given."
@@ -102,11 +106,11 @@
 
 (defn delete
   "Removes the object completely."
-  ;; TODO: Check that the object exists.
   [name]
-  (deselect)
-  (select name)
-  (.delete bpy.ops/object))
+  (when ((set (.keys (objects))) name)
+    (deselect)
+    (select name)
+    (.delete bpy.ops/object)))
 
 (defn apply_transforms
   "Make all of the initiated `position`, `rotation`, `properties` and `scale` changes happen! - if they haven't already."
@@ -114,37 +118,38 @@
   (.transform_apply bpy.ops/object
                     ** :rotation true :location true :properties true :scale true))
 
-#_(comment
-    (deselect)
-    (select)
-    (select-type :mesh)
+(comment
+  ;; === Startup procedure ===
+  (import os)
+  (.chdir os "/home/ctw/Python/fawltypoly")
+  (load-file "fawltypoly/interop.lpy")
+  (load-file "fawltypoly/object.lpy")
+  (load-file "fawltypoly/material.lpy")
+  (require '[fawltypoly.object :as o])
+  (require '[fawltypoly.interop :as i])
+  (require '[fawltypoly.material :as mat])
 
-    (add :location [10.0 5.0 0.0])
-    (delete "light")
+  (i/get {:a 5} :a)
+  (i/get (objects) "Cube")
+  ;; === ^^^Startup procedure ===
 
-    (import os)
-    (.chdir os "/home/ctw/Python/fawltypoly")
-    (load-file "fawltypoly/interop.lpy")
-    (load-file "fawltypoly/object.lpy")
+  (first (mat/available (object "Cube")))
+  (println "thing")
 
-    (require '[fawltypoly.object :as o])
-    (require '[fawltypoly.interop :as i])
+  (deselect)
+  (select)
+  (select-type :mesh)
 
-    (println "thing")
-    (i/get {:a 5} :a)
-    (i/get (objects) "Cube")
+  (mat/create-light)
+  (add! :location [5.0 5.0 0.0]
+        :rotation [(/ math/pi 2.0),0,0]
+        :name--material "light")
+  (delete "light")
 
-    (import sys)
-    (.-path sys)
-    (.append (.- sys path) "/home/ctw/Python")
+  (import sys)
+  (.-path sys)
+  (.append (.- sys path) "/home/ctw/Python")
 
-    (import fawltypoly.object)
-    (import importlib)
-    (.reload importlib "fawltypoly.object")
-
-    (import os)
-    (.chdir os "/home/ctw/Python/fawltypoly")
-    (println (.getcwd os))
-    (import glob)
-    (.glob glob "**/*.lpy")
-    (require '[scene :as scene]))
+  (import glob)
+  (.glob glob "**/*.lpy")
+  (require '[scene :as scene]))

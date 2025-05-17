@@ -3,12 +3,14 @@
 (defn reload []
   (import os)
   (.chdir os "/home/ctw/Python/fawltypoly")
-
   (load-file "fawltypoly/interop.lpy")
   (load-file "fawltypoly/object.lpy")
 
-  (require '[fawltypoly.object :as o] :reload)
-  (require '[fawltypoly.interop :as i] :reload))
+  (require '[fawltypoly.object :as o])
+  (require '[fawltypoly.interop :as i])
+
+  (i/get {:a 5} :a)
+  (println (str "Objects: " (i/get (o/objects) "Cube"))))
 
 (comment
   (println "thing")
