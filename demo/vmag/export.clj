@@ -1,4 +1,4 @@
-(ns fawltypoly.export-vmag
+(ns demo.vmag.export
   "Run from the light-matters project classpath. Export scalar AMPS equations,
    not a sampled surface grid. The physics stays in the upstream SEIT/Qas code."
   (:require [clojure.edn :as edn]

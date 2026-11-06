@@ -1,6 +1,6 @@
 """Verify exported equations against Qas probes and density-matrix physicality.
 
-Usage: poetry run python resources/verify_vmag.py [path/to/export.edn]
+Usage: poetry run python demo/vmag/verify.py [path/to/export.edn]
 Runs without Blender or a JVM.
 """
 
@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 import sys
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
@@ -48,6 +48,6 @@ def verify(path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", nargs="?", type=Path,
-                        default=ROOT / "fawltypoly/data/vmag_field_angles.edn")
+                        default=Path(__file__).with_name("data") / "vmag_field_angles.edn")
     args = parser.parse_args()
     print(json.dumps(verify(args.path), indent=2))

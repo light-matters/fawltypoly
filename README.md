@@ -7,7 +7,27 @@ This library is an alternative API for the [Blender](blender.org) graphics tool.
 
 
 ## Status
-Entirely exploratory, providing no guarantees at all! I'm currently playing with it for personal projects, but with an eye to reusability.
+The package is at version 0.2.0. New projects should use
+`fawltypoly.api.v1`, the versioned public entry point. Its compatibility policy
+and exports are documented in [docs/API.md](docs/API.md). Existing lower-level
+namespaces remain available for development and legacy scripts.
+
+## Library and projects
+
+- `fawltypoly/`: installable Blender API, geometry, symbolic expressions,
+  materials, layouts and reusable compass assets.
+- `demo/`: application code and presentation presets; not part of the package.
+- `demo/vmag/`: VMAG equations, data, exporter, verification and plotting.
+- `tests/test_core.lpy`: library and v1 compatibility checks.
+- `tests/test_demos.lpy`: application and VMAG integration checks.
+
+```clojure
+(require '[fawltypoly.api.v1 :as fp])
+(fp/ensure-scene!
+  {:collection "My surfaces" :prune? true
+   :objects [{:id :surface
+              :mesh (fp/expression->mesh '(pow (cos (/ theta 2)) 4))}]})
+```
 
 ## Development setup
 
@@ -442,99 +462,15 @@ poetry run python demo/render_amps.py --layout paired
 This writes `dist/amps-paired.png` and `dist/amps-paired.blend` in a separate
 Blender process. Choose `--output` to change the destination.
 
-## Actual VMAG equations at different field angles
+## VMAG project
 
-The paired presentation can now use calculations from `light-matters`, with
-bundled cases for magnetic polar angles 0°, 45°, and 90°:
+The [VMAG example](demo/vmag/README.md) owns the magnetic-field calculations,
+equation data, normalization choices, export scripts and plotting presets.
+It uses the versioned library API and is excluded from the installed package.
 
 ```clojure
-(require '[fawltypoly.vmag :as vmag])
-(vmag/show! :polar-0)
+(require '[demo.vmag.plot :as vmag])
 (vmag/show! :polar-45)
-(vmag/show! :polar-90 {:theta-segments 40 :phi-segments 80})
-```
-
-These update the same owned `AMPS paired rings` collection used by the demo,
-replacing the illustrative states. Use `:collection "Another comparison"` in
-the options to keep a separate scene. Both rings contain eight matching beam
-azimuths, 0..315° at 45° intervals. The original compass points along the actual
-calculated field direction. All surfaces use a common radius/colour scale.
-
-The bundled calculation uses the Doppler-free SEIT model for 87Rb D2,
-F=1 -> F'=0, `Bmag=0.1 G`, field azimuth 0, equal beam intensities
-`2 mW/cm²`, ground relaxation `1100 s^-1`, zero detuning and OAM `l1=-1,l2=+1`.
-Atomic equations come from the solved ground-state density block. Optical
-equations come from the upstream vortex-beam polarization API. They are not
-rotated copies of the previous illustrative states.
-
-The equations are already in the laboratory frame, with the propagation axis
-along +Z. They retain identity object rotations when placed on the rings;
-rotating them onto B again would apply the field transformation twice. Changing
-the field changes the computed atomic equations, while the incident optical
-states remain the same. By default, the displayed ground block is normalized
-to unit trace, showing polarization conditional on ground-manifold occupation.
-The exported source data retains the original population for provenance.
-
-This is an explicit normalization convention, not the removal of sublevel
-populations. Conditional normalization is the default:
-
-```clojure
-(vmag/show! :polar-45)
-;; Opt out to retain the overall ground-state occupation, as in the old poster:
-(vmag/show! :polar-45 {:normalize-ground? false})
-```
-
-It evaluates `P / Tr(rho_ground)`, preserving the angular shape, relative
-populations and coherences while removing only the overall manifold weight.
-Setting `false` retains the joint probability, as in the poster. For spin 1,
-its solid-angle AMPS integral is `4*pi/3` times the ground population; the
-conditional surface integrates to `4*pi/3`. Metadata
-records `:conditional-ground` or `:ground-population` and the ground populations
-for all sampled azimuths. The bundled populations range from about 0.99852 to
-0.99999, so this choice changes radii by at most about 0.15% for these settings.
-
-Render one field case or all three with identical camera, lighting and scales:
-
-```sh
-poetry run python demo/render_amps.py --layout vmag --field-case polar-45
-poetry run python demo/render_amps.py --layout vmag --field-case all --output dist/vmag.png
-```
-
-The second command writes `vmag-polar-0`, `vmag-polar-45` and `vmag-polar-90`
-PNG and Blender files. Surface resolution can change locally because the input
-is a symbolic equation in viewing angles, not a precomputed mesh grid. Physical
-field parameters are fixed per exported case; new field values require another
-upstream calculation. No interpolation or mere mesh rotation substitutes for it.
-
-To regenerate or export more cases, run this script from the light-matters
-project root on its Clojure classpath:
-
-```sh
-clojure -M /absolute/path/to/fawltypoly/resources/export_vmag.clj /tmp/vmag.edn
-```
-
-An optional second argument is an EDN settings file, for example:
-
-```clojure
-{:polar-degrees [0 45 90]
- :field-azimuth-degrees 0
- :beam-count 8
- :parameters {:Bmag 0.1 :int1 2.0 :int2 2.0}}
-```
-
-The exporter currently pairs the upstream equal-intensity `l1=-1,l2=+1` vortex
-beam with the SEIT solver and rejects other beam conventions. It records full
-parameters, density matrices, equations and numerical probes. Saved reference
-cells are compared when parameters and sampled azimuths match. Load an export
-with `(vmag/load-dataset "/tmp/vmag.edn")`, then use
-`(vmag/show! dataset :polar-45 {})`. Missing cases fail explicitly.
-
-The bundled reference comparisons agree within `1.8e-13`. See
-`fawltypoly/data/README.md` for provenance and normalization details. Verify the
-numerical probes and density matrices independently with:
-
-```sh
-poetry run python resources/verify_vmag.py
 ```
 
 ## JVM Clojure / MathBox demo
@@ -547,7 +483,8 @@ independently of Blender/Basilisp.
 ## Verification
 
 ```sh
-poetry run python tests/run_blender.py
+poetry run python tests/run_blender.py            # library and demos
+poetry run python tests/run_blender.py --api-only # library without demo imports
 ```
 
 The runner starts a separate factory-startup Blender process, leaving open

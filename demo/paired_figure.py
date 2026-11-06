@@ -21,7 +21,7 @@ def render(output, samples, field_case=None):
     if field_case is None:
         eval_str("(do (require '[demo.circular :as demo]) (demo/show! {:theta-segments 40 :phi-segments 64 :field-direction [1 1 0.6]}))")
     else:
-        metadata = eval_str(f"""(do (require '[fawltypoly.vmag :as vmag] '[fawltypoly.scene :as scene])
+        metadata = eval_str(f"""(do (require '[demo.vmag.plot :as vmag] '[fawltypoly.scene :as scene])
           (let [spec (vmag/scene-spec {json.dumps(field_case)} {{:theta-segments 32 :phi-segments 64}})]
             (scene/ensure-scene! spec) (:vmag spec)))""")
     scene = bpy.context.scene

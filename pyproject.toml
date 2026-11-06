@@ -1,9 +1,10 @@
 [tool.poetry]
 name = "fawltypoly"
-version = "0.1.0"
+version = "0.2.0"
 description = "An alternative Clojure(ish)-Blender API."
 authors = ["ctw <clark.thomaswilliam@zoho.eu>"]
 readme = "README.md"
+packages = [{ include = "fawltypoly" }]
 
 [tool.poetry.dependencies]
 python = "^3.10"

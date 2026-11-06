@@ -1,18 +1,14 @@
-(ns fawltypoly.vmag
+(ns demo.vmag.plot
   "Actual SEIT/Qas AMPS equations in the laboratory frame, arranged at beam azimuths."
-  (:require [fawltypoly.amps :as amps]
-            [fawltypoly.expression :as expression]
-            [fawltypoly.geometry :as geo]
-            [fawltypoly.layout :as layout]
-            [fawltypoly.scene :as scene])
-  (:import math pathlib fawltypoly))
+  (:require [fawltypoly.api.v1 :as api])
+  (:import math pathlib demo.vmag))
 
 (defn validate!
   [{:keys [format frame normalization beam-azimuths optical cases] :as dataset}]
   (when-not (and (= format "fawltypoly.vmag/1") (= frame :lab-z)
                 (= normalization :ground-population)
                 (vector? beam-azimuths) (pos? (count beam-azimuths))
-                (every? #(and (geo/finite? %) (<= 0 %) (< % (* 2 math/pi))) beam-azimuths)
+                (every? #(and (api/finite? %) (<= 0 %) (< % (* 2 math/pi))) beam-azimuths)
                 (every? (fn [[a b]] (< a b)) (partition 2 1 beam-azimuths))
                 (vector? optical) (= (count optical) (count beam-azimuths))
                 (vector? cases) (pos? (count cases))
@@ -20,21 +16,21 @@
     (throw (ex-info "Expected a lab-frame VMAG equation bundle with matching azimuths" {})))
   (doseq [case cases]
     (let [{:keys [Bmag Bpolar Bazimuth]} (:params case)]
-      (when-not (and (keyword? (:id case)) (every? geo/finite? [Bmag Bpolar Bazimuth])
+      (when-not (and (keyword? (:id case)) (every? api/finite? [Bmag Bpolar Bazimuth])
                     (<= 0 Bmag) (<= 0 Bpolar math/pi)
                     (vector? (:atomic case)) (= (count optical) (count (:atomic case))))
         (throw (ex-info "Invalid VMAG field case" {:id (:id case)})))))
   (doseq [state (concat optical (mapcat :atomic cases))]
     (when-not (and (map? state) (contains? state :expression)
-                  (geo/finite? (:trace state)) (< 0 (:trace state) 1.00000001))
+                  (api/finite? (:trace state)) (< 0 (:trace state) 1.00000001))
       (throw (ex-info "Invalid VMAG AMPS state" {}))))
   dataset)
 
 (defn load-dataset
-  "Read the bundled calculation or an EDN export produced by resources/export_vmag.clj."
-  ([] (validate! (expression/read-data (.read_text (.joinpath (.-parent (pathlib/Path fawltypoly/__file__))
+  "Read the bundled calculation or an EDN export produced by demo/vmag/export.clj."
+  ([] (validate! (api/read-data (.read_text (.joinpath (.-parent (pathlib/Path demo.vmag/__file__))
                                                        "data" "vmag_field_angles.edn")))))
-  ([path] (validate! (expression/read-data (slurp path)))))
+  ([path] (validate! (api/read-data (slurp path)))))
 
 (def ^:private bundled (delay (load-dataset)))
 
@@ -64,14 +60,14 @@
          descriptions (fn [group states]
                         (mapv (fn [i state]
                                 {:id (keyword group (str i)) :name (str group " phi=" (nth (:beam-azimuths dataset) i))
-                                 :mesh (amps/expression->mesh (if (and normalize-ground? (= group "atomic"))
+                                 :mesh (api/expression->mesh (if (and normalize-ground? (= group "atomic"))
                                                                (list '/ (:expression state) (:trace state))
                                                                (:expression state))
                                                                {:radius-scale radius-scale :theta-segments theta-segments
                                                                 :phi-segments phi-segments})
                                  :rotation [0 0 0] :material :radius :smooth? true})
                               (range (count states)) states))
-         rings (layout/paired-rings (descriptions "optical" (:optical dataset))
+         rings (api/paired-rings (descriptions "optical" (:optical dataset))
                                     (descriptions "atomic" (:atomic case))
                                     {:center center :normal [0 0 1] :reference [1 0 0]
                                      :angles (:beam-azimuths dataset) :orientation :fixed
@@ -85,12 +81,12 @@
       :materials {:radius {:radius-color {:colormap colormap :range [0 radius-scale]} :roughness 0.55}
                   :guide {:color [0.12 0.14 0.17 1] :roughness 0.6}}
       :objects (vec (concat (:optical rings) (:atomic rings)
-                            [(layout/ring-guide :guide/optical {:center center :radius optical-radius :material :guide})
-                             (layout/ring-guide :guide/atomic {:center center :radius atomic-radius :material :guide})]
-                            (layout/poster-compass "compass" {:center center :direction direction :normal [0 0 1]
+                            [(api/ring-guide :guide/optical {:center center :radius optical-radius :material :guide})
+                             (api/ring-guide :guide/atomic {:center center :radius atomic-radius :material :guide})]
+                            (api/poster-compass "compass" {:center center :direction direction :normal [0 0 1]
                                                               :radius 1.624 :length 2.8})))})))
 
 (defn show!
-  ([id] (scene/ensure-scene! (scene-spec id)))
-  ([id options] (scene/ensure-scene! (scene-spec id options)))
-  ([dataset id options] (scene/ensure-scene! (scene-spec dataset id options))))
+  ([id] (api/ensure-scene! (scene-spec id)))
+  ([id options] (api/ensure-scene! (scene-spec id options)))
+  ([dataset id options] (api/ensure-scene! (scene-spec dataset id options))))

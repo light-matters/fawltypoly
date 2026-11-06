@@ -1,7 +1,7 @@
 # VMAG field-angle equations
 
 `vmag_field_angles.edn` contains equations computed from the actual
-`light-matters` SEIT model, exported with `resources/export_vmag.clj`.
+`light-matters` SEIT model, exported with `demo/vmag/export.clj`.
 It is not a mesh grid or a rotation of the illustrative demo states.
 
 - Field polar angles: 0, 45, 90 degrees from beam +Z; field azimuth 0.
@@ -33,7 +33,7 @@ The three computed density-matrix sweeps were compared with saved upstream
 2.33e-15 (0°), 1.45e-13 (45°), 1.74e-13 (90°). This export comparison did not
 start Wolfram; the upstream native implementation has its own ADM regressions.
 
-`poetry run python resources/verify_vmag.py` checks positive semidefiniteness,
+`poetry run python demo/vmag/verify.py` checks positive semidefiniteness,
 Hermiticity, traces and every numerical probe without Blender or a JVM.
 The Blender integration suite additionally checks case changes, lab-frame
 orientation, optical invariance, atomic changes and stable object counts.

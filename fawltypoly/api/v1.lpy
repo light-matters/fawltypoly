@@ -1,0 +1,36 @@
+(ns fawltypoly.api.v1
+  "Version 1 of the supported scene-description and surface API.
+   See docs/API.md for the compatibility contract and public data formats."
+  (:require [fawltypoly.scene :as scene]
+            [fawltypoly.geometry :as geometry]
+            [fawltypoly.amps :as amps]
+            [fawltypoly.expression :as expression]
+            [fawltypoly.layout :as layout]
+            [fawltypoly.color :as color]))
+
+(def api-version 1)
+
+;; Explicit exports keep implementation helpers out of the compatibility surface.
+(def ensure-scene! scene/ensure-scene!)
+(def validate-mesh! geometry/validate!)
+(def finite? geometry/finite?)
+(def plane geometry/plane)
+(def cube geometry/cube)
+(def parametric-surface geometry/parametric-surface)
+(def radial-surface geometry/radial-surface)
+(def radial-grid geometry/radial-grid)
+(def arrow geometry/arrow)
+(def expression->mesh amps/expression->mesh)
+(def grid->mesh amps/grid->mesh)
+(def read-amps-json amps/read-json)
+(def read-data expression/read-data)
+(def read-expression expression/read-expression)
+(def compile-expression expression/compile)
+(def circular layout/circular)
+(def paired-rings layout/paired-rings)
+(def field-vector layout/field-vector)
+(def ring-guide layout/ring-guide)
+(def compass-sphere layout/compass-sphere)
+(def poster-compass layout/poster-compass)
+(def colormap-stops color/colormap-stops)
+(def sample-color color/sample)
