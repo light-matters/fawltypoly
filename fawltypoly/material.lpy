@@ -1,5 +1,7 @@
 (ns fawltypoly.material
   "For dealing with mesh surface properties."
+  (:require [fawltypoly.geometry :as geo]
+            [fawltypoly.color :as color])
   (:import bpy))
 
 (defn available
@@ -17,16 +19,98 @@
         {:name (.- node name) :type (.- node bl_idname)})
       (print "Material not found or does not use nodes."))))
 
-(defn assign
-  "Attaches the suggested 'material' to the supplied object."
-  [object name]
-  (let [m (-> (available)
-              (.get name))
-        mo (available object)]
+(defn assign!
+  "Set the first material slot, preserving other slots. Return the object."
+  [object ref]
+  (let [m (if (string? ref) (.get (available) ref) ref)
+        slots (available object)]
+    (when-not (instance? bpy.types/Material m)
+      (throw (ex-info "Material not found" {:material ref})))
+    (if (zero? (count slots)) (.append slots m) (aset slots 0 m))
+    object))
 
-    (if mo
-      (.append mo m)
-      (aset mo 0 m))))
+(def assign assign!)
+
+(defn validate!
+  "Validate a material description, including its optional radius-color map."
+  [{:keys [color roughness metallic radius-color opacity]
+    :or {color [0.2 0.45 0.8 1] roughness 0.45 metallic 0} :as spec}]
+  (when-not (and (map? spec) (= 4 (count color))
+                (every? #(and (geo/finite? %) (<= 0 % 1)) color)
+                (every? #(and (geo/finite? %) (<= 0 % 1)) [roughness metallic]))
+    (throw (ex-info "Invalid material color or surface values" {})))
+  (when (and (contains? spec :opacity) (not (and (geo/finite? opacity) (<= 0 opacity 1))))
+    (throw (ex-info "Material opacity must be between zero and one" {})))
+  (when (contains? spec :radius-color)
+    (when-not (map? radius-color) (throw (ex-info "radius-color must be a map" {})))
+    (color/radius-settings radius-color))
+  spec)
+
+(defn- clear-radius-nodes! [nodes]
+  (doseq [node (vec nodes) :when (.get node "fawltypoly.radius-node" false)]
+    (.remove nodes node)))
+
+(defn- radius-nodes! [tree bsdf settings]
+  (let [{:keys [range origin stops]} (color/radius-settings settings)
+        nodes (.-nodes tree)
+        links (.-links tree)
+        new-node (fn [type label location]
+                   (let [node (.new nodes type)]
+                     (set! (.-name node) label)
+                     (set! (.-label node) label)
+                     (set! (.-location node) location)
+                     (aset node "fawltypoly.radius-node" true)
+                     node))
+        coords (new-node "ShaderNodeTexCoord" "Radius: object coordinates" [-1000 0])
+        offset (new-node "ShaderNodeVectorMath" "Radius: subtract origin" [-800 0])
+        length (new-node "ShaderNodeVectorMath" "Radius: length" [-600 0])
+        normalize (new-node "ShaderNodeMapRange" "Radius: shared range" [-400 0])
+        ramp (new-node "ShaderNodeValToRGB" "Radius: colormap" [-160 0])]
+    (set! (.-operation offset) "SUBTRACT")
+    (set! (.-default_value (aget (.-inputs offset) 1)) origin)
+    (set! (.-operation length) "LENGTH")
+    (set! (.-clamp normalize) true)
+    (set! (.-interpolation_type normalize) "LINEAR")
+    (doseq [[socket value] [["From Min" (first range)] ["From Max" (second range)]
+                            ["To Min" 0] ["To Max" 1]]]
+      (set! (.-default_value (.get (.-inputs normalize) socket)) value))
+    (let [color-ramp (.-color_ramp ramp)
+          elements (.-elements color-ramp)]
+      (set! (.-color_mode color-ramp) "RGB")
+      (set! (.-interpolation color-ramp) "LINEAR")
+      (doseq [[i [position rgba]] (map-indexed vector stops)]
+        (let [element (cond (= i 0) (aget elements 0)
+                            (= i 31) (aget elements (dec (count elements)))
+                            :else (.new elements position))]
+          (set! (.-position element) position)
+          (set! (.-color element) rgba))))
+    (.new links (.get (.-outputs coords) "Object") (aget (.-inputs offset) 0))
+    (.new links (.get (.-outputs offset) "Vector") (aget (.-inputs length) 0))
+    (.new links (.get (.-outputs length) "Value") (.get (.-inputs normalize) "Value"))
+    (.new links (.get (.-outputs normalize) "Result") (.get (.-inputs ramp) "Fac"))
+    (.new links (.get (.-outputs ramp) "Color") (.get (.-inputs bsdf) "Base Color"))))
+
+(defn ensure!
+  "Create/update a Principled material. Color is linear RGBA. Optional
+   :radius-color maps object-local distance from :origin through a clamped
+   :range and Matplotlib :colormap (default Viridis). :opacity controls Principled
+   Alpha (0 transparent, 1 opaque), defaulting to the color's alpha component."
+  [label {:keys [color roughness metallic radius-color]
+          :or {color [0.2 0.45 0.8 1] roughness 0.45 metallic 0} :as spec}]
+  (validate! spec)
+  (let [m (or (.get (available) label) (.new (available) label))]
+    (set! (.-use_nodes m) true)
+    (let [nodes (.-nodes (.-node_tree m))
+          bsdf (first (filter #(= "ShaderNodeBsdfPrincipled" (.-bl_idname %)) nodes))]
+      (when-not bsdf
+        (throw (ex-info "Material has no Principled BSDF node" {:material label})))
+      (clear-radius-nodes! nodes)
+      (doseq [[socket value] [["Base Color" color] ["Roughness" roughness] ["Metallic" metallic]
+                              ["Alpha" (get spec :opacity (nth color 3))]]]
+        (set! (.-default_value (.get (.-inputs bsdf) socket)) value))
+      (when radius-color (radius-nodes! (.-node_tree m) bsdf radius-color)))
+    (set! (.-diffuse_color m) (assoc color 3 (get spec :opacity (nth color 3))))
+    m))
 
 (defn create-light
   ([] (create-light "light"))

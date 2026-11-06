@@ -1,0 +1,106 @@
+(ns fawltypoly.scene
+  "Repeatable mesh scene descriptions, scoped to an owned Blender collection."
+  (:require [fawltypoly.geometry :as geo]
+            [fawltypoly.mesh :as mesh]
+            [fawltypoly.object :as obj]
+            [fawltypoly.material :as mat])
+  (:import bpy
+           [fawltypoly.compass_assets :as assets]))
+
+(defn scene [] (.-scene bpy/context))
+
+(defn clear-meshes
+  "Legacy helper: delete all mesh objects in the current scene."
+  []
+  (doseq [object (vec (.-objects (scene))) :when (= "MESH" (.-type object))]
+    (obj/delete! object)))
+
+(defn- valid-id? [id]
+  (or (keyword? id) (and (string? id) (not (empty? id)))))
+
+(defn- validate-spec! [{:keys [collection objects materials prune?]
+                      :or {materials {} prune? false} :as spec}]
+  (when-not (and (string? collection) (not (empty? collection)) (vector? objects) (map? materials))
+    (throw (ex-info "Expected collection name, objects vector, and optional materials map" {})))
+  (when-not (= (count objects) (count (set (map :id objects))))
+    (throw (ex-info "Scene object IDs must be unique" {})))
+  (when-not (boolean? prune?) (throw (ex-info "prune? must be a boolean" {})))
+  ;; String and keyword IDs can stringify equally; keep their storage keys distinct.
+  (doseq [[id material] materials]
+    (when-not (and (valid-id? id) (map? material))
+      (throw (ex-info "Invalid material description" {:id id})))
+    (mat/validate! material))
+  (doseq [{:keys [id mesh asset asset-opacity material] :as object} objects]
+    (when-not (valid-id? id) (throw (ex-info "Expected keyword or nonempty string object ID" {:id id})))
+    (when (and (contains? object :name)
+               (not (and (string? (:name object)) (not (empty? (:name object))))))
+      (throw (ex-info "Object name must be a nonempty string" {:id id})))
+    (when (and (contains? object :smooth?) (not (boolean? (:smooth? object))))
+      (throw (ex-info "smooth? must be a boolean" {:id id})))
+    (when (= (contains? object :mesh) (contains? object :asset))
+      (throw (ex-info "Supply exactly one of mesh or bundled asset" {:id id})))
+    (if asset (assets/validate asset asset-opacity) (geo/validate! mesh))
+    (doseq [key [:location :rotation :scale] :when (contains? object key)]
+      (let [xyz (get object key)]
+        (when-not (and (vector? xyz) (= 3 (count xyz)) (every? geo/finite? xyz))
+          (throw (ex-info "Expected a finite XYZ transform" {:id id :key key})))))
+    (when (and material (not (contains? materials material)))
+      (throw (ex-info "Unknown material ID" {:id id :material material}))))
+  spec)
+
+(defn- id-key [id] (str (if (keyword? id) "keyword:" "string:") id))
+
+(defn- collection! [label]
+  (let [existing (.get bpy.data/collections label)]
+    (when (and existing (not (.get existing "fawltypoly.managed" false)))
+      (throw (ex-info "Collection already exists and is not owned by FawltyPoly" {:collection label})))
+    (let [collection (or existing (.new bpy.data/collections label))
+          children (.-children (.-collection (scene)))]
+      (aset collection "fawltypoly.managed" true)
+      (when-not (.get children label) (.link children collection))
+      collection)))
+
+(defn ensure-scene!
+  "Create/update objects by stable IDs within an owned collection.
+   Each supplied object is a complete description: omitted transforms reset to
+   identity. Omitted material clears procedural mesh slots; bundled assets retain
+   native materials and shading unless explicitly overridden. Unlisted objects remain unless
+   :prune? is true. Pruning only unlinks tagged objects from this collection.
+   Descriptions are validated first; Blender runtime errors are not rolled back."
+  [{:keys [collection objects materials prune?] :or {materials {} prune? false} :as spec}]
+  (validate-spec! spec)
+  (let [coll (collection! collection)
+        tagged (filter #(.get % "fawltypoly.id") (.-objects coll))
+        grouped (group-by #(.get % "fawltypoly.id") tagged)]
+    (when (some #(> (count %) 1) (vals grouped))
+      (throw (ex-info "Duplicate managed IDs in Blender collection" {:collection collection})))
+    (doseq [{:keys [id]} objects
+            :let [existing (first (get grouped (id-key id)))]]
+      (when (and existing (not (= "MESH" (.-type existing))))
+        (throw (ex-info "Managed object is no longer a mesh" {:id id}))))
+    (let [resolved-materials
+          (into {} (map (fn [[id spec]] [id (mat/ensure! (str "fawltypoly/" collection "/" (id-key id)) spec)]) materials))
+          resolved-objects
+          (into {}
+                (for [{:keys [id name mesh asset asset-opacity location rotation scale material smooth?]
+                       :or {location [0 0 0] rotation [0 0 0] scale [1 1 1] smooth? false} :as spec} objects]
+                  (let [existing (first (get grouped (id-key id)))
+                        object (if asset
+                                 (assets/apply_to (or existing (mesh/create! (or name (str id))
+                                                                           {:vertices [] :faces []} coll)) asset asset-opacity)
+                                 (if existing (mesh/replace! existing mesh)
+                                   (mesh/create! (or name (str id)) mesh coll)))]
+                    (aset object "fawltypoly.id" (id-key id))
+                    (when name (obj/name! object name))
+                    (-> object (obj/location! location) (obj/rotation! rotation) (obj/scale! scale))
+                    (when (or (not asset) (contains? spec :smooth?)) (mesh/smooth! object smooth?))
+                    (when (or (not asset) (contains? spec :material))
+                      (.clear (.-materials (.-data object)))
+                      (when material (mat/assign! object (get resolved-materials material))))
+                    [id object])))]
+      (when prune?
+        (let [wanted (set (map (comp id-key :id) objects))]
+          (doseq [object (vec tagged) :when (not (contains? wanted (.get object "fawltypoly.id")))]
+            (.unlink (.-objects coll) object)
+            (when (zero? (count (.-users_collection object))) (obj/delete! object)))))
+      {:collection coll :objects resolved-objects :materials resolved-materials})))

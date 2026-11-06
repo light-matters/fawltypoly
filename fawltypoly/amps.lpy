@@ -1,0 +1,54 @@
+(ns fawltypoly.amps
+  "Data adapters for lightmatters.api.v1.amps/surface. No physics engine or Blender
+   dependency: the source supplies maximal-projection probabilities on a grid."
+  (:require [fawltypoly.geometry :as geo]
+            [fawltypoly.expression :as expression])
+  (:import json))
+
+(defn expression->mesh
+  "Compile an expression and sample it directly in Blender/Python.
+   Options combine expression/compile and geometry/radial-surface settings with
+   :radius-scale and :negative-tolerance. No upstream grid is required."
+  ([form] (expression->mesh form {}))
+  ([form {:keys [radius-scale negative-tolerance]
+          :or {radius-scale 1 negative-tolerance 1e-12} :as options}]
+   (when-not (and (geo/finite? radius-scale) (pos? radius-scale)
+                 (geo/finite? negative-tolerance) (<= 0 negative-tolerance))
+     (throw (ex-info "Invalid expression surface scale options" {})))
+   (let [f (expression/compile form options)]
+     (geo/radial-surface
+      (fn [theta phi]
+        (let [p (f theta phi)]
+          (when (< p (- negative-tolerance))
+            (throw (ex-info "AMPS expression produced a negative probability"
+                            {:theta theta :phi phi :value p})))
+          (* radius-scale (max 0 p))))
+      options))))
+
+(defn read-json
+  "Read a JSON export of light-matters' AMPS surface result."
+  [path]
+  (let [data (json/loads (slurp path))]
+    (when (.get data "error") (throw (ex-info "AMPS source returned an error" {:error (.get data "error")})))
+    {:theta (vec (.get data "theta")) :phi (vec (.get data "phi"))
+     :values (mapv vec (.get data "values")) :j (.get data "j")}))
+
+(defn grid->mesh
+  "Radius = radius-scale * P(theta,phi), preserving absolute probabilities.
+   Tiny negative roundoff in [-negative-tolerance,0] is clamped to zero.
+   Angles are radians; no axis permutation, square root, or max-normalization."
+  ([grid] (grid->mesh grid {}))
+  ([{:keys [values error] :as grid}
+    {:keys [radius-scale negative-tolerance] :or {radius-scale 1 negative-tolerance 1e-12}}]
+   (when error (throw (ex-info "AMPS source returned an error" {:error error})))
+   (when-not (and (geo/finite? radius-scale) (pos? radius-scale)
+                 (geo/finite? negative-tolerance) (<= 0 negative-tolerance)
+                 (vector? values) (every? vector? values))
+     (throw (ex-info "Invalid AMPS grid or scale options" {})))
+   (geo/radial-grid
+    (assoc grid :values
+           (mapv (fn [row]
+                   (mapv (fn [p]
+                           (when-not (and (geo/finite? p) (>= p (- negative-tolerance)))
+                             (throw (ex-info "AMPS probabilities must be finite and nonnegative" {:value p})))
+                           (* radius-scale (max 0 p))) row)) values)))))

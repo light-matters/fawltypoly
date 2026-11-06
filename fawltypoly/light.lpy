@@ -1,8 +1,15 @@
 (ns fawltypoly.light
-  "For all of your blender lighting needs.")
+  "Blender lighting helpers."
+  (:require [fawltypoly.object :as obj])
+  (:import bpy))
 
-(defn add_plane ()
-  ""
-  [])
-
-(println "testing")
+(defn area!
+  "Create an area light without changing the active selection."
+  [{:keys [name location rotation energy size]
+    :or {name "Area" location [0 0 5] rotation [0 0 0] energy 1000 size 5}}]
+  (let [data (.new bpy.data/lights name ** :type "AREA")
+        light (.new bpy.data/objects name data)]
+    (.link (.-objects (.-collection bpy/context)) light)
+    (set! (.-energy data) energy)
+    (set! (.-size data) size)
+    (-> light (obj/location! location) (obj/rotation! rotation))))

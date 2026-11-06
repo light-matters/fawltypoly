@@ -1,0 +1,56 @@
+(ns fawltypoly.mesh
+  "Mesh creation and replacement through Blender's data API."
+  (:require [fawltypoly.geometry :as geo]
+            [fawltypoly.object :as obj])
+  (:import bpy))
+
+(defn- mesh-data! [label geometry]
+  (geo/validate! geometry)
+  (let [data (.new bpy.data/meshes label)]
+    (try
+      (.from_pydata data (python/list (map python/tuple (:vertices geometry)))
+                    #py [] (python/list (map python/tuple (:faces geometry))))
+      (.update data)
+      data
+      (catch Exception e
+        (.remove bpy.data/meshes data)
+        (throw e)))))
+
+(defn create!
+  "Create a mesh object in the supplied collection (default: current collection).
+   Does not alter selection or the active object."
+  ([label geometry] (create! label geometry (.-collection bpy/context)))
+  ([label geometry collection]
+   (let [data (mesh-data! (str label "_mesh") geometry)
+         object (.new bpy.data/objects label data)]
+     (.link (.-objects collection) object)
+     object)))
+
+(defn replace!
+  "Replace geometry while retaining object identity and material slots.
+   Shared meshes are left intact for their other users."
+  [ref geometry]
+  (let [object (obj/require-object ref)]
+    (when-not (= "MESH" (.-type object))
+      (throw (ex-info "Expected a mesh object" {:object ref})))
+    (let [old (.-data object)
+          data (mesh-data! (str (.-name object) "_mesh") geometry)]
+      (doseq [material (.-materials old)] (.append (.-materials data) material))
+      (set! (.-data object) data)
+      (when (zero? (.-users old)) (.remove bpy.data/meshes old))
+      object)))
+
+(defn smooth!
+  ([ref] (smooth! ref true))
+  ([ref enabled?]
+   (let [object (obj/require-object ref)]
+     (doseq [polygon (.-polygons (.-data object))] (set! (.-use_smooth polygon) enabled?))
+     object)))
+
+(defn cube!
+  ([] (cube! {:name "Cube"}))
+  ([{:keys [name] :or {name "Cube"}}] (create! name geo/cube)))
+
+(defn plane!
+  ([] (plane! {:name "Plane"}))
+  ([{:keys [name] :or {name "Plane"}}] (create! name geo/plane)))

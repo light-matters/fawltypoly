@@ -1,17 +1,134 @@
-(ns fawltypoly.scene
-  "For general object setup, arrangement and tear down."
-  (:require [fawltypoly.object :as obj])
-  (:import bpy
-           math))
+(ns fawltypoly.layout
+  "Scene-description layouts. Placement does not imply a physical state change."
+  (:require [fawltypoly.scene :as s]
+            [fawltypoly.spatial :as spatial]
+            [fawltypoly.geometry :as geo])
+  (:import math
+           [fawltypoly.compass_assets :as assets]))
 
-(defn clear-meshes []
-  ;; TODO: WIP
-  (obj/deselect)
-  (obj/select-type :mesh)
-  ;; (obj/delete)
-  )
+(def scene s/scene)
+(def clear-meshes s/clear-meshes)
 
-(defn scene
-  ""
-  []
-  (.-scene bpy/context))
+(defn circular
+  "Place descriptions around a circle, retaining IDs, meshes, materials and scale.
+   :normal fixes the ring plane; :reference fixes angle zero. Angles are radians.
+   :orientation :fixed preserves each rotation (default). :normal, :radial, and
+   :tangent explicitly replace rotation to aim local +Z in that direction.
+   Existing locations are replaced, not added. Explicit :angles must match count."
+  [objects {:keys [center normal reference radius phase angles orientation]
+            :or {center [0 0 0] normal [0 0 1] reference [1 0 0]
+                 radius 4 phase 0 orientation :fixed}}]
+  (spatial/xyz! center)
+  (when-not (and (vector? objects) (every? map? objects)
+                (geo/finite? radius) (pos? radius) (geo/finite? phase)
+                (#{:fixed :normal :radial :tangent} orientation)
+                (or (nil? angles) (and (vector? angles) (= (count objects) (count angles))
+                                      (every? geo/finite? angles))))
+    (throw (ex-info "Invalid circular layout options" {})))
+  (let [{:keys [x y z]} (spatial/frame normal reference)
+        angles (or angles (mapv #(* 2 math/pi (/ % (count objects))) (range (count objects))))]
+    (mapv (fn [object angle]
+            (let [a (+ phase angle)
+                  radial (spatial/add (spatial/scale x (math/cos a)) (spatial/scale y (math/sin a)))
+                  tangent (spatial/cross z radial)
+                  placed (assoc object :location (spatial/add center (spatial/scale radial radius)))]
+              (case orientation
+                :fixed placed
+                :normal (assoc placed :rotation (spatial/euler z x))
+                :radial (assoc placed :rotation (spatial/euler radial z))
+                :tangent (assoc placed :rotation (spatial/euler tangent z))))) objects angles)))
+
+(defn field-vector
+  "A mesh arrow description pointing along direction. Length is a display length,
+   independent of field magnitude. The arrow starts at :origin."
+  [id direction {:keys [origin length material reference]
+                 :or {origin [0 0 0] length 3 reference [1 0 0]} :as options}]
+  (spatial/xyz! origin)
+  (cond-> {:id id :name "Magnetic field B" :mesh (geo/arrow (assoc options :length length))
+           :location origin :rotation (spatial/euler direction reference) :smooth? true}
+    material (assoc :material material)))
+
+(defn paired-rings
+  "Optical/atomic descriptions at matching azimuths, returned in separate vectors.
+   Counts must match and all IDs must be unique across both rings. Radii default
+   to 5 (optical) and 3.2 (atomic). Each ring can override :orientation through
+   :optical-orientation/:atomic-orientation; neither changes the source physics."
+  [optical atomic {:keys [optical-radius atomic-radius optical-orientation atomic-orientation]
+                   :or {optical-radius 5 atomic-radius 3.2} :as options}]
+  (when-not (and (vector? optical) (vector? atomic) (= (count optical) (count atomic))
+                (not= optical-radius atomic-radius)
+                (= (+ (count optical) (count atomic))
+                   (count (set (map :id (concat optical atomic))))))
+    (throw (ex-info "Paired rings need matching counts, distinct radii, and unique IDs" {})))
+  {:optical (circular optical (cond-> (assoc options :radius optical-radius)
+                               optical-orientation (assoc :orientation optical-orientation)))
+   :atomic (circular atomic (cond-> (assoc options :radius atomic-radius)
+                             atomic-orientation (assoc :orientation atomic-orientation)))})
+
+(defn ring-guide
+  "A thin torus describing the same ring plane, center and zero-angle frame."
+  [id {:keys [center normal reference radius thickness material]
+       :or {center [0 0 0] normal [0 0 1] reference [1 0 0] radius 4 thickness 0.015}}]
+  (spatial/xyz! center)
+  (when-not (and (geo/finite? radius) (geo/finite? thickness) (< 0 thickness radius))
+    (throw (ex-info "Expected 0 < guide thickness < ring radius" {})))
+  (cond-> {:id id :name "Circular guide"
+           :mesh (geo/parametric-surface
+                  (fn [u v] (let [r (+ radius (* thickness (math/cos v))) ]
+                              [(* r (math/cos u)) (* r (math/sin u)) (* thickness (math/sin v))]))
+                  {:u-range [0 (* 2 math/pi)] :v-range [0 (* 2 math/pi)]
+                   :u-segments 128 :v-segments 8 :wrap-u? true :wrap-v? true})
+           :location center :rotation (spatial/euler normal reference) :smooth? true}
+    material (assoc :material material)))
+
+(defn compass-sphere
+  "Compass frame descriptions centered on the field arrow: three orthogonal
+   great circles and an optional shell when :shell-material is provided.
+   IDs are stable strings beginning with prefix. Shell transparency belongs to
+   its material (:opacity), so it can be shared or styled independently."
+  [prefix {:keys [center normal reference radius thickness material shell-material]
+           :or {center [0 0 0] normal [0 0 1] reference [1 0 0]
+                radius 1.6 thickness 0.012}}]
+  (when-not (and (string? prefix) (not (empty? prefix)))
+    (throw (ex-info "Compass ID prefix must be a nonempty string" {})))
+  (let [{:keys [x y z]} (spatial/frame normal reference)
+        rings (mapv (fn [[label axis]]
+                      (assoc (ring-guide (str prefix "/" label)
+                                         {:center center :normal axis :radius radius
+                                          :thickness thickness :material material})
+                             :name (str "Compass " label)))
+                    [["equator" z] ["meridian-x" x] ["meridian-y" y]])]
+    (cond-> rings
+      shell-material
+      (conj {:id (str prefix "/shell") :name "Compass sphere"
+             :mesh (geo/radial-surface (fn [_theta _phi] radius)
+                                       {:theta-segments 32 :phi-segments 64})
+             :location center :material shell-material :smooth? true}))))
+
+(defn poster-compass
+  "Original poster needle, translucent sphere and angle guides, with native
+   materials preserved. Red points along direction, white in the opposite sense.
+   Container frame follows normal/reference independently of the needle."
+  [prefix {:keys [center direction normal reference length radius container? opacity]
+           :or {center [0 0 0] direction [0 0 1] normal [0 0 1] reference [1 0 0]
+                length 2.8 radius 1.6 container? true}}]
+  (spatial/xyz! center)
+  (when-not (and (string? prefix) (not (empty? prefix))
+                (geo/finite? length) (pos? length) (geo/finite? radius) (pos? radius)
+                (boolean? container?))
+    (throw (ex-info "Invalid poster compass options" {})))
+  (assets/validate "compass/shell" opacity)
+  (let [rotation (spatial/euler direction reference)
+        frame (spatial/euler normal reference)
+        needle-scale (/ length assets/NEEDLE_LENGTH)]
+    (vec (concat
+          (map (fn [part] {:id (str prefix "/" part) :name (str "Poster compass " part)
+                           :asset (str "compass/" part) :location center :rotation rotation
+                           :scale [needle-scale needle-scale needle-scale]}) ["north" "south"])
+          (when container?
+            (map (fn [part]
+                   (cond-> {:id (str prefix "/" part) :name (str "Poster compass " part)
+                            :asset (str "compass/" part) :location center :rotation frame
+                            :scale [radius radius radius]}
+                     (and (= part "shell") (some? opacity)) (assoc :asset-opacity opacity)))
+                 ["shell" "equator" "meridian"]))))))

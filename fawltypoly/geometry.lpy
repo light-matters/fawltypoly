@@ -1,0 +1,147 @@
+(ns fawltypoly.geometry
+  "Pure mesh data and sampling functions; usable outside Blender."
+  (:import math))
+
+(defn finite? [x] (and (number? x) (math/isfinite x)))
+
+(defn validate!
+  "Validate finite XYZ vertices and polygon indices before passing them to Blender."
+  [{:keys [vertices faces] :as geometry}]
+  (when-not (and (vector? vertices) (vector? faces)
+                (every? #(and (vector? %) (= 3 (count %)) (every? finite? %)) vertices)
+                (every? #(and (vector? %) (<= 3 (count %))
+                              (= (count %) (count (set %)))
+                              (every? (fn [i] (and (integer? i) (<= 0 i) (< i (count vertices)))) %))
+                        faces))
+    (throw (ex-info "Expected finite XYZ vertices and faces with distinct in-range indices"
+                    {:geometry geometry})))
+  geometry)
+
+(def plane
+  {:vertices [[-1 -1 0] [1 -1 0] [1 1 0] [-1 1 0]] :faces [[0 1 2 3]]})
+
+(def cube
+  {:vertices [[-1 -1 -1] [1 -1 -1] [1 1 -1] [-1 1 -1]
+              [-1 -1 1] [1 -1 1] [1 1 1] [-1 1 1]]
+   :faces [[3 2 1 0] [4 5 6 7] [0 1 5 4] [1 2 6 5] [2 3 7 6] [3 0 4 7]]})
+
+(defn parametric-surface
+  "Sample f(u,v)->[x y z]. Wrapped directions omit the duplicate seam endpoint.
+   Degenerate poles/nodes are not welded by this general sampler."
+  [f {:keys [u-range v-range u-segments v-segments wrap-u? wrap-v?]
+      :or {u-range [0 1] v-range [0 1] u-segments 32 v-segments 32
+           wrap-u? false wrap-v? false}}]
+  (when-not (and (integer? u-segments) (integer? v-segments)
+                (>= u-segments (if wrap-u? 3 1)) (>= v-segments (if wrap-v? 3 1))
+                (= 2 (count u-range)) (= 2 (count v-range))
+                (every? finite? u-range) (every? finite? v-range))
+    (throw (ex-info "Invalid parametric sampling options" {})))
+  (let [nu (+ u-segments (if wrap-u? 0 1))
+        nv (+ v-segments (if wrap-v? 0 1))
+        sample (fn [[a b] i n] (+ a (* (- b a) (/ i n))))
+        idx (fn [i j] (+ (* (mod j nv) nu) (mod i nu)))]
+    (validate!
+     {:vertices (vec (for [j (range nv) i (range nu)]
+                       (vec (f (sample u-range i u-segments) (sample v-range j v-segments)))))
+      :faces (vec (for [j (range v-segments) i (range u-segments)]
+                    [(idx i j) (idx (inc i) j) (idx (inc i) (inc j)) (idx i (inc j))]))})))
+
+(defn- spherical-point [theta phi r]
+  (when-not (and (finite? r) (<= 0 r))
+    (throw (ex-info "Radius must be finite and nonnegative" {:theta theta :phi phi :radius r})))
+  [(* r (math/sin theta) (math/cos phi))
+   (* r (math/sin theta) (math/sin phi))
+   (* r (math/cos theta))])
+
+(defn- rings->geometry [rings phi-segments]
+  ;; Relative tolerance keeps this usable at very small physical length scales.
+  (let [extent (reduce max 0 (map abs (mapcat identity (mapcat identity rings))))
+        tolerance (* extent 1e-12)
+        rings (mapv (fn [points]
+                      (if (every? (fn [p] (every? #(<= (abs %) tolerance) (map - p (first points)))) points)
+                        [(first points)] points)) rings)
+        starts (reduce (fn [acc ring] (conj acc (+ (peek acc) (count ring)))) [0] rings)
+        ring-indices (mapv (fn [i] (vec (range (nth starts i) (nth starts (inc i)))))
+                           (range (count rings)))
+        faces (vec
+               (mapcat
+                (fn [[a b]]
+                  (if (and (= 1 (count a)) (= 1 (count b)))
+                    []
+                    (for [j (range phi-segments) :let [k (mod (inc j) phi-segments)]]
+                      (cond
+                        (= 1 (count a)) [(first a) (nth b j) (nth b k)]
+                        (= 1 (count b)) [(nth a j) (first b) (nth a k)]
+                        :else [(nth a j) (nth b j) (nth b k) (nth a k)]))))
+                (partition 2 1 ring-indices)))]
+    (validate! {:vertices (vec (mapcat identity rings)) :faces faces})))
+
+(defn arrow
+  "Closed +Z arrow mesh from z=0 to length, with a cylindrical shaft and cone head."
+  [{:keys [length shaft-radius head-radius head-length segments]
+    :or {length 3 shaft-radius 0.055 head-radius 0.18 head-length 0.45 segments 24}}]
+  (when-not (and (every? finite? [length shaft-radius head-radius head-length])
+                (< 0 head-length length) (< 0 shaft-radius head-radius)
+                (integer? segments) (>= segments 3))
+    (throw (ex-info "Invalid arrow dimensions" {})))
+  (let [profile [[0 0] [shaft-radius 0] [shaft-radius (- length head-length)]
+                 [head-radius (- length head-length)] [0 length]]
+        rings (mapv (fn [[r z]]
+                      (mapv (fn [i] (let [phi (* 2 math/pi (/ i segments))]
+                                      [(* r (math/cos phi)) (* r (math/sin phi)) z]))
+                            (range segments))) profile)]
+    (update (rings->geometry rings segments) :faces #(mapv (comp vec reverse) %))))
+
+(defn radial-surface
+  "Sample nonnegative radius(theta,phi). Theta is polar angle from +Z, phi azimuth.
+   Weld coincident rings within 1e-12 of the surface's coordinate scale. Nodes may
+   produce nonmanifold touching lobes; this does not reconstruct an isosurface."
+  [radius {:keys [theta-range theta-segments phi-segments]
+           :or {theta-range [0 math/pi] theta-segments 32 phi-segments 64}}]
+  (when-not (and (integer? theta-segments) (pos? theta-segments)
+                (integer? phi-segments) (>= phi-segments 3)
+                (= 2 (count theta-range)) (every? finite? theta-range)
+                (<= 0 (first theta-range)) (< (first theta-range) (second theta-range))
+                (<= (second theta-range) math/pi))
+    (throw (ex-info "Invalid radial sampling options" {})))
+  (let [[t0 t1] theta-range]
+    (rings->geometry
+     (mapv (fn [i]
+             (let [theta (+ t0 (* (- t1 t0) (/ i theta-segments)))]
+               (mapv (fn [j]
+                       (let [phi (* 2 math/pi (/ j phi-segments))]
+                         (spherical-point theta phi (radius theta phi))))
+                     (range phi-segments))))
+           (range (inc theta-segments)))
+     phi-segments)))
+
+(defn radial-grid
+  "Convert sampled radii to mesh data without interpolation or normalization.
+   theta spans 0..pi, phi spans 0..2pi, both include endpoints and increase
+   strictly. values[i][j] is the radius at theta[i],phi[j]. Duplicate phi endpoint
+   is checked and removed. Pole radii must be independent of phi."
+  [{:keys [theta phi values]}]
+  (let [close? (fn [a b] (<= (abs (- a b)) (* 1e-10 (max 1 (abs a) (abs b)))))
+        increasing? (fn [xs] (every? (fn [[a b]] (< a b)) (partition 2 1 xs)))]
+    (when-not (and (vector? theta) (vector? phi) (vector? values)
+                  (>= (count theta) 2) (>= (count phi) 4)
+                  (every? finite? theta) (every? finite? phi)
+                  (increasing? theta) (increasing? phi)
+                  (close? (first theta) 0) (close? (peek theta) math/pi)
+                  (close? (first phi) 0) (close? (peek phi) (* 2 math/pi))
+                  (= (count theta) (count values))
+                  (every? #(and (vector? %) (= (count phi) (count %))
+                                (every? (fn [r] (and (finite? r) (<= 0 r))) %)) values))
+      (throw (ex-info "Expected a complete theta/phi radial grid with nonnegative finite values" {})))
+    (let [tolerance (* 1e-10 (reduce max 0 (mapcat identity values)))
+          same-radius? (fn [a b] (<= (abs (- a b)) tolerance))]
+      (when-not (and (every? #(same-radius? (first %) (peek %)) values)
+                    (every? #(same-radius? % (ffirst values)) (first values))
+                    (every? #(same-radius? % (first (peek values))) (peek values)))
+        (throw (ex-info "Radial grid has inconsistent seam or poles" {}))))
+    (rings->geometry
+     (mapv (fn [i]
+             (mapv (fn [j] (spherical-point (nth theta i) (nth phi j) (get-in values [i j])))
+                   (range (dec (count phi)))))
+           (range (count theta)))
+     (dec (count phi)))))

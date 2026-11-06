@@ -1,0 +1,65 @@
+(ns demo.circular
+  "Illustrative paired AMPS rings. Replace these states with upstream calculations
+   for a physical optical/atomic comparison; no magnetic response is simulated."
+  (:require [fawltypoly.amps :as amps]
+            [fawltypoly.layout :as layout]
+            [fawltypoly.spatial :as spatial]
+            [fawltypoly.scene :as scene]
+            [demo.amps :as examples]))
+
+(defn scene-spec
+  ([] (scene-spec {}))
+  ([{:keys [surface-count surface-radius-scale optical-radius atomic-radius normal center
+            field-direction field-length theta-segments phi-segments colormap
+            compass? compass-radius compass-thickness compass-opacity compass-style]
+     :or {surface-count 8 surface-radius-scale 1.2 optical-radius 4.8 atomic-radius 3
+          normal [0 0 1] center [0 0 0] field-length 2.8 theta-segments 24 phi-segments 48
+          colormap :viridis compass? true compass-thickness 0.012 compass-style :original} :as options}]
+   (when-not (and (integer? surface-count) (pos? surface-count))
+     (throw (ex-info "surface-count must be a positive integer" {})))
+   (when-not (boolean? compass?) (throw (ex-info "compass? must be a boolean" {})))
+   (when-not (#{:original :procedural} compass-style)
+     (throw (ex-info "compass-style must be original or procedural" {})))
+   (let [field-direction (or field-direction normal)
+         mesh-options {:radius-scale surface-radius-scale :theta-segments theta-segments :phi-segments phi-segments}
+         optical-mesh (amps/expression->mesh examples/aligned-expression mesh-options)
+         atomic-mesh (amps/expression->mesh examples/stretched-expression mesh-options)
+         descriptions (fn [group mesh rotation]
+                        (mapv (fn [i] {:id (keyword group (str i)) :name (str group " " i)
+                                       :mesh mesh :rotation rotation :material :radius :smooth? true}) (range surface-count)))
+         options (merge {:normal normal :center center :optical-radius optical-radius :atomic-radius atomic-radius
+                         :optical-orientation :radial :atomic-orientation :fixed} options)
+         rings (layout/paired-rings (descriptions "optical" optical-mesh [0 0 0])
+                                    (descriptions "atomic" atomic-mesh (spatial/euler field-direction)) options)
+         arrow-origin (spatial/add center (spatial/scale (spatial/unit field-direction) (* -0.5 field-length)))]
+     {:collection "AMPS paired rings" :prune? true
+      :materials {:radius {:radius-color {:colormap colormap :range [0 surface-radius-scale]} :roughness 0.55}
+                  :field {:color [0.65 0.025 0.025 1] :roughness 0.4}
+                  :guide {:color [0.12 0.14 0.17 1] :roughness 0.6}
+                  :compass-shell {:color [0.3 0.4 0.5 1] :opacity (or compass-opacity 0.035) :roughness 0.8}}
+      :objects (vec (concat (:optical rings) (:atomic rings)
+                            [(layout/ring-guide :guide/optical (assoc options :radius optical-radius :material :guide))
+                             (layout/ring-guide :guide/atomic (assoc options :radius atomic-radius :material :guide))]
+                            (if (= compass-style :original)
+                              (mapv (fn [spec] (case (:id spec)
+                                                "compass/north" (assoc spec :id :field/B)
+                                                "compass/south" (assoc spec :id :field/south)
+                                                spec))
+                                    (layout/poster-compass "compass"
+                                                           {:center center :direction field-direction :normal normal
+                                                            :reference (get options :reference [1 0 0])
+                                                            :length field-length :radius (or compass-radius (* 0.58 field-length))
+                                                            :container? compass? :opacity compass-opacity}))
+                              (concat [(layout/field-vector :field/B field-direction
+                                                             {:origin arrow-origin :length field-length :material :field})]
+                                      (when compass?
+                                        (layout/compass-sphere "compass"
+                                                     {:center center :normal normal
+                                                      :reference (get options :reference [1 0 0])
+                                                      :radius (or compass-radius (* 0.58 field-length))
+                                                      :thickness compass-thickness :material :guide
+                                                      :shell-material :compass-shell}))))))})))
+
+(defn show!
+  ([] (show! {}))
+  ([options] (scene/ensure-scene! (scene-spec options))))

@@ -1,0 +1,45 @@
+(ns fawltypoly.spatial
+  "Pure three-dimensional frames and Blender-compatible XYZ Euler rotations."
+  (:require [fawltypoly.geometry :as geo])
+  (:import math))
+
+(defn xyz! [v]
+  (when-not (and (vector? v) (= 3 (count v)) (every? geo/finite? v))
+    (throw (ex-info "Expected a finite XYZ vector" {:vector v})))
+  v)
+
+(defn add [a b] (mapv + a b))
+(defn scale [a s] (mapv #(* % s) a))
+(defn dot [a b] (reduce + (map * a b)))
+(defn cross [[a b c] [x y z]] [(- (* b z) (* c y)) (- (* c x) (* a z)) (- (* a y) (* b x))])
+(defn magnitude [v] (math/hypot (nth v 0) (nth v 1) (nth v 2)))
+
+(defn unit [v]
+  (xyz! v)
+  (let [length (magnitude v)]
+    (when (or (zero? length) (not (geo/finite? length)))
+      (throw (ex-info "Direction must be nonzero with finite magnitude" {:vector v})))
+    (mapv #(/ % length) v)))
+
+(defn frame
+  "Right-handed frame with +Z along normal and +X toward the projected reference.
+   A parallel reference falls back to the least-parallel Cartesian axis."
+  ([normal] (frame normal [1 0 0]))
+  ([normal reference]
+   (let [z (unit normal) reference (unit reference)
+         projected (add reference (scale z (- (dot reference z))))
+         reference (if (< (magnitude projected) 1e-10)
+                     (apply min-key #(abs (dot % z)) [[1 0 0] [0 1 0] [0 0 1]]) reference)
+         x (unit (add reference (scale z (- (dot reference z)))))
+         y (cross z x)]
+     {:x x :y y :z z})))
+
+(defn euler
+  "XYZ Euler angles rotating local +Z to direction, with reference fixing roll."
+  ([direction] (euler direction [1 0 0]))
+  ([direction reference]
+   (let [{:keys [x y z]} (frame direction reference)
+         beta (math/asin (max -1 (min 1 (- (nth x 2)))))]
+     (if (> (abs (math/cos beta)) 1e-10)
+       [(math/atan2 (nth y 2) (nth z 2)) beta (math/atan2 (nth x 1) (nth x 0))]
+       [(math/atan2 (- (nth z 1)) (nth y 1)) beta 0]))))

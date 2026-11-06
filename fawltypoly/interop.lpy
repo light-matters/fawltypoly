@@ -26,47 +26,37 @@
   (let [bpy-prop-collection-type (python/getattr (python/getattr bpy "types") "bpy_prop_collection")]
     (cond
       (instance? bpy-prop-collection-type m)
-      (let [result (.get m k)]
-        (if (nil? result) default result))
+      (if (integer? k)
+        (try (aget m k) (catch python/IndexError _ default))
+        (let [result (.get m k)] (if (nil? result) default result)))
+
+      ;; mathutils vectors and other native sequences are not Basilisp collections.
+      (and (integer? k) (not (map? m)) (python/hasattr m "__getitem__"))
+      (try (aget m k)
+           (catch python/IndexError _ default)
+           (catch python/KeyError _ default))
 
       :else
       (try
-        (c/get m k)
+        (c/get m k default)
         (catch Exception e
           (throw (python/TypeError (str "Unsupported type for get: " (type m)))))))))
 
 (defn get-in
-  "Retrieves the value in a nested structure given a sequence of keys.
-   Handles bpy_prop_collection and falls back to basilisp.core/get-in for other types."
+  "Traverse maps, sequences, Blender collections, and attributes (string keys).
+   Stop at the first missing key. Existing nil values remain nil at the leaf."
   [m ks & [default]]
-  (let [bpy-prop-collection-type (python/getattr (python/getattr bpy "types") "bpy_prop_collection")]
-
-    (reduce
-     (fn [acc k]
-
-       ;; (println "===")
-       ;; (println acc)
-       ;; (println k)
-       ;; (println (python/hasattr acc k))
-       ;; (println "===")
-
-       (cond
-         (instance? bpy-prop-collection-type acc)
-         (let [result (.get acc k)]
-           (if (nil? result) default result))
-
-         (and (string? k) (python/hasattr acc k))
-         (python/getattr acc k)
-
-         (and acc (python/hasattr acc "get"))
-         (.get acc k default)
-
-         (coll? acc)
-         (try (nth acc k default)
-              (catch python/IndexError _ default))
-
-         :else default))
-     m ks)))
+  (let [missing (python/object)]
+    (loop [value m keys (seq ks)]
+      (if-not keys
+        value
+        (let [k (first keys)
+              next-value (if (and (string? k) (python/hasattr value k))
+                           (python/getattr value k)
+                           (get value k missing))]
+          (if (identical? missing next-value)
+            default
+            (recur next-value (next keys))))))))
 
 (comment
   (get {"a" 5} "a")

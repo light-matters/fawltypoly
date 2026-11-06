@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.lpyc
+dist/
+.nrepl-port
+.clj-kondo/.cache/
+.clj-kondo/.cache*/
+.lsp/.cache/
+log.txt

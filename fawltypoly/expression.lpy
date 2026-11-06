@@ -1,0 +1,27 @@
+(ns fawltypoly.expression
+  "Compile scalar symbolic s-expressions into numerical theta/phi functions.
+   Forms are data: only the explicit arithmetic whitelist is interpreted."
+  (:refer-basilisp :exclude [compile])
+  (:import [fawltypoly.symbolic_data :as data]
+           [fawltypoly.symbolic_math :as numeric]))
+
+(defn read-data
+  "Read arithmetic EDN, including scientific numbers and ratios, without reader
+   macros or tagged literals. No evaluation is performed."
+  [text]
+  (data/loads text))
+
+(defn read-expression
+  "Read one EDN expression exported with (pr-str (emmy.generic/freeze expr))."
+  [path]
+  (read-data (slurp path)))
+
+(defn compile
+  "Compile a frozen Emmy or Wolfram-style scalar expression into f(theta,phi).
+   :parameters binds exact symbol keys to finite scalars; angle aliases and
+   constants are reserved. Complex intermediates are supported, but the final
+   result must be finite and real within :imaginary-tolerance (default 1e-10).
+   Only the arithmetic whitelist is compiled; no input source is evaluated."
+  ([form] (compile form {}))
+  ([form {:keys [parameters imaginary-tolerance] :or {parameters {} imaginary-tolerance 1e-10}}]
+   (numeric/compile_expression form parameters imaginary-tolerance)))

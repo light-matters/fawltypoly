@@ -1,155 +1,98 @@
 (ns fawltypoly.object
-  "For manipulating blender meshes and similar types."
-  (:require
-   [fawltypoly.material :as mat]
-   [fawltypoly.interop :as i])
-  (:import bpy
-           math))
+  "Object access and composable mutations. Angles are in radians."
+  (:require [fawltypoly.material :as mat])
+  (:import bpy))
 
-;; TODO:
-;; - Implement protocol for prop collection
-;; - How do print something to stdout while the server is running?
-
-(defn objects
-  "All of the available object references."
-  []
-  (.-objects bpy/data))
+(defn objects [] (.-objects bpy/data))
 
 (defn object
-  "Retrieves the active or named  object reference, for further manipulation."
-  ([] (-> bpy/context
-          .-active_object))
-  ([name]
-   (.get (objects) name)))
+  "Resolve an object reference or name; return nil for a missing name."
+  ([] (.-active_object bpy/context))
+  ([ref] (if (string? ref) (.get (objects) ref) ref)))
 
-(defn name-active!
-  "Labels the 'active' object."
-  [name]
-  (set! (-> (object)
-            .-name)
-        name))
+(defn require-object [ref]
+  (let [obj (object ref)]
+    (when-not (instance? bpy.types/Object obj)
+      (throw (ex-info "Object not found" {:object ref})))
+    obj))
+
+(defn location! [ref xyz]
+  (let [obj (require-object ref)] (set! (.-location obj) xyz) obj))
+
+(defn rotation! [ref xyz]
+  (let [obj (require-object ref)] (set! (.-rotation_euler obj) xyz) obj))
+
+(defn scale! [ref xyz]
+  (let [obj (require-object ref)] (set! (.-scale obj) xyz) obj))
+
+(defn name! [ref label]
+  (let [obj (require-object ref)] (set! (.-name obj) label) obj))
+
+(defn name-active! [label] (name! (object) label))
 
 (defn name-mesh!
-  "Labels the 'active' or supplied object's mesh. (`name`+'_mesh')"
-  ([name] (set! (.-data (object))
-                (str name "_mesh")))
-  ([name object]
-   (set! (.-name (.-data object))
-         (str name "_mesh"))))
+  ([label] (name-mesh! label (object)))
+  ([label ref]
+   (let [obj (require-object ref)]
+     (set! (.-name (.-data obj)) (str label "_mesh"))
+     obj)))
 
 (defn add!
-  "Put a new object in the scene."
-  [& {:keys [type
-             name
-             name--material
-             location
-             rotation
-             scale]
-      :or {type :plane
-           name "light"
-           name--material nil
-           location [0.0 0.0 0.0]
-           rotation [0.0 0.0 0.0]
-           scale [1.0 1.0 1.0]}}]
-
+  "Legacy primitive creation. New scene workflows use mesh/create! instead."
+  [& {:keys [type name name--material location rotation scale]
+      :or {type :plane name "light" location [0 0 0]
+           rotation [0 0 0] scale [1 1 1]}}]
   (case type
-    :plane (.primitive_plane_add bpy.ops/mesh **
-                                 :location location
-                                 :rotation rotation
-                                 :scale scale)
-    :sphere (.primitive_uv_sphere_add bpy.ops/mesh **
-                                      :location location
-                                      :rotation rotation
-                                      :scale scale)
-
-    :default (tap> "Supplied type isn't implemented. Please contact the library maintainers if this is unexpected."))
-
-  (name-active! name)
-  (name-mesh! name (object name))
-  (when name--material
-    (mat/assign (object name) name--material))
-
-  (object name))
+    :plane (.primitive_plane_add bpy.ops/mesh ** :location location :rotation rotation :scale scale)
+    :sphere (.primitive_uv_sphere_add bpy.ops/mesh ** :location location :rotation rotation :scale scale)
+    :cube (.primitive_cube_add bpy.ops/mesh ** :location location :rotation rotation :scale scale)
+    (throw (ex-info "Unsupported primitive" {:type type})))
+  ;; Blender may suffix a colliding name, so retain the actual new object.
+  (let [obj (object)]
+    (name! obj name)
+    (name-mesh! (.-name obj) obj)
+    (when name--material (mat/assign! obj name--material))
+    obj))
 
 (defn select
-  "Make the chosen object active. Selects all objects if no name is given."
-  ([]
-   (.select_all bpy.ops/object ** :action "SELECT"))
-  ([name]
-   (.select_set (object name)  ** :state true)))
+  "Select objects. Selection and active object are distinct Blender concepts."
+  ([] (doseq [obj (.-objects (.-view_layer bpy/context))] (.select_set obj true)))
+  ([ref] (let [obj (require-object ref)] (.select_set obj true) obj)))
 
-(defn select-type
-  "'Selects' all things of the type `type`, a string that can be
-  - :mesh
-  - ...
-  "
-  [type]
-  (case type
-    :mesh (.select-by-type bpy.ops/object ** :type "MESH")))
+(defn active! [ref]
+  (let [obj (select ref)]
+    (set! (.-active (.-objects (.-view_layer bpy/context))) obj)
+    obj))
+
+(defn select-type [kind]
+  (let [type-name (case kind :mesh "MESH" :camera "CAMERA" :light "LIGHT"
+                   (throw (ex-info "Unsupported selection type" {:type kind})))]
+    (doseq [obj (.-objects (.-view_layer bpy/context))]
+      (.select_set obj (= type-name (.-type obj))))))
 
 (defn deselect
-  "Make the chosen object active. Selects all objects if no name is given."
-  ([]
-   (.select-all     bpy.ops/object ** :action "DESELECT"))
-  ([name]))
+  ([] (doseq [obj (.-objects (.-view_layer bpy/context))] (.select_set obj false)))
+  ([ref] (let [obj (require-object ref)] (.select_set obj false) obj)))
 
-(defn move
-  "Sets the location of the object."
-  ;; TODO: check that the object exists first.
-  [name location]
-  (set! (-> (object name) .-location) location))
+(defn delete!
+  "Unlink an object everywhere. Shared mesh data is kept; unused mesh data is freed."
+  [ref]
+  (when-let [obj (object ref)]
+    (let [mesh (when (= "MESH" (.-type obj)) (.-data obj))
+          owned-materials (when mesh (vec (filter #(and % (.get % "fawltypoly.opacity-copy" false))
+                                                 (.-materials mesh))))]
+      (.remove bpy.data/objects obj ** :do_unlink true)
+      (when (and mesh (zero? (.-users mesh))) (.remove bpy.data/meshes mesh))
+      (doseq [material owned-materials :when (zero? (.-users material))]
+        (.remove bpy.data/materials material))))
+  nil)
 
-(defn rotate
-  "Sets the Euler rotation vector."
-  [name rotation]
-  (set! (-> (object name) .-rotation_euler) rotation))
-
-(defn delete
-  "Removes the object completely."
-  [name]
-  (when ((set (.keys (objects))) name)
-    (deselect)
-    (select name)
-    (.delete bpy.ops/object)))
+;; Compatibility with the original API.
+(def move location!)
+(def rotate rotation!)
+(def delete delete!)
 
 (defn apply_transforms
-  "Make all of the initiated `position`, `rotation`, `properties` and `scale` changes happen! - if they haven't already."
+  "Legacy context-dependent operator: applies transforms to selected objects."
   []
-  (.transform_apply bpy.ops/object
-                    ** :rotation true :location true :properties true :scale true))
-
-(comment
-  ;; === Startup procedure ===
-  (import os)
-  (.chdir os "/home/ctw/Python/fawltypoly")
-  (load-file "fawltypoly/interop.lpy")
-  (load-file "fawltypoly/object.lpy")
-  (load-file "fawltypoly/material.lpy")
-  (require '[fawltypoly.object :as o])
-  (require '[fawltypoly.interop :as i])
-  (require '[fawltypoly.material :as mat])
-
-  (i/get {:a 5} :a)
-  (i/get (objects) "Cube")
-  ;; === ^^^Startup procedure ===
-
-  (first (mat/available (object "Cube")))
-  (println "thing")
-
-  (deselect)
-  (select)
-  (select-type :mesh)
-
-  (mat/create-light)
-  (add! :location [5.0 5.0 0.0]
-        :rotation [(/ math/pi 2.0),0,0]
-        :name--material "light")
-  (delete "light")
-
-  (import sys)
-  (.-path sys)
-  (.append (.- sys path) "/home/ctw/Python")
-
-  (import glob)
-  (.glob glob "**/*.lpy")
-  (require '[scene :as scene]))
+  (.transform_apply bpy.ops/object ** :rotation true :location true :scale true))

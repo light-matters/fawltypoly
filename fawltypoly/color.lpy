@@ -1,0 +1,56 @@
+(ns fawltypoly.color
+  "Matplotlib colormaps converted from sRGB to Blender's linear RGB."
+  (:require [fawltypoly.geometry :as geo])
+  (:import importlib))
+
+(defn srgb->linear
+  "Convert an sRGB RGBA color to linear RGB, preserving alpha."
+  [[r g b a]]
+  (conj (mapv (fn [c] (if (<= c 0.04045) (/ c 12.92)
+                       (python/pow (/ (+ c 0.055) 1.055) 2.4))) [r g b]) a))
+
+(defn colormap-name [ref]
+  (when-not (or (keyword? ref) (string? ref))
+    (throw (ex-info "Expected a colormap name" {:colormap ref})))
+  (name ref))
+
+(def ^:private cached-stops
+  (memoize
+   (fn [label]
+     ;; Import only when a colormap is used; ordinary materials do not need it.
+     (let [matplotlib (importlib/import_module "matplotlib")
+           cmap (try (aget (.-colormaps matplotlib) label)
+                    (catch python/KeyError _
+                      (throw (ex-info "Unknown Matplotlib colormap" {:colormap label}))))]
+       ;; Blender ColorRamp supports at most 32 stops.
+       (mapv (fn [i]
+               (let [position (float (/ i 31))]
+                 [position (srgb->linear (mapv float (cmap position)))]))
+             (range 32))))))
+
+(defn colormap-stops
+  "32 [position linear-RGBA] stops, shared by shaders and figure legends."
+  [ref]
+  (cached-stops (colormap-name ref)))
+
+(defn sample
+  "Sample the same piecewise-linear colormap as the Blender ramp; clamp t to 0..1."
+  [ref t]
+  (when-not (geo/finite? t) (throw (ex-info "Color factor must be finite" {:value t})))
+  (let [stops (colormap-stops ref)
+        x (* 31 (max 0 (min 1 t)))
+        i (min 30 (int x))
+        weight (- x i)
+        a (second (nth stops i)) b (second (nth stops (inc i)))]
+    (mapv (fn [a b] (+ (* (- 1 weight) a) (* weight b))) a b)))
+
+(defn radius-settings
+  "Validate radius-color options before any Blender data is changed."
+  [{:keys [colormap range origin]
+    :or {colormap :viridis range [0 1] origin [0 0 0]}}]
+  (when-not (and (vector? range) (= 2 (count range)) (every? geo/finite? range)
+                (<= 0 (first range)) (< (first range) (second range))
+                (vector? origin) (= 3 (count origin)) (every? geo/finite? origin))
+    (throw (ex-info "Expected an increasing nonnegative radius range and finite XYZ origin" {})))
+  {:colormap (colormap-name colormap) :range range :origin origin
+   :stops (colormap-stops colormap)})

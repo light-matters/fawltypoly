@@ -1,0 +1,479 @@
+(ns fawltypoly.test-core
+  (:require [clojure.test :refer [deftest is testing]]
+            [fawltypoly.geometry :as geo]
+            [fawltypoly.mesh :as mesh]
+            [fawltypoly.object :as obj]
+            [fawltypoly.scene :as scene]
+            [fawltypoly.material :as mat]
+            [fawltypoly.color :as color]
+            [fawltypoly.interop :as interop]
+            [fawltypoly.amps :as amps-data]
+            [fawltypoly.expression :as expression]
+            [fawltypoly.vmag :as vmag]
+            [basilisp.edn :as edn]
+            [fawltypoly.layout :as layout]
+            [fawltypoly.spatial :as spatial]
+            [fawltypoly.light :as light]
+            [fawltypoly.camera :as camera]
+            [fawltypoly.render]
+            [demo.amps :as amps]
+            [demo.circular :as circular])
+  (:import bpy math mathutils))
+
+(defn throws? [f]
+  (try (f) false (catch Exception _ true)))
+
+(deftest sampling-and-physics
+  (is (= 4 (count (:vertices (geo/parametric-surface (fn [u v] [u v 0])
+                                                   {:u-segments 1 :v-segments 1})))))
+  (is (= [[0 1 3 2]] (:faces (geo/parametric-surface (fn [u v] [u v 0])
+                                                  {:u-segments 1 :v-segments 1}))))
+  (is (throws? #(geo/validate! {:vertices [[0 0 0]] :faces [[0 1 2]]})))
+  (is (throws? #(geo/validate! {:vertices [[math/nan 0 0]] :faces []})))
+  (is (throws? #(geo/radial-surface (fn [t p] -1) {})))
+  (let [sphere (geo/radial-surface (fn [t p] 1) {:theta-segments 8 :phi-segments 16})]
+    (is (= 114 (count (:vertices sphere))))
+    (is (= 128 (count (:faces sphere)))))
+  (is (= 114 (count (:vertices (geo/radial-surface (fn [t p] 1e-20)
+                                                  {:theta-segments 8 :phi-segments 16})))))
+  (is (= 1.0 (amps/probability 0 0)))
+  (is (< (abs (- 0.25 (amps/probability (/ math/pi 2) 0))) 1e-12))
+  (is (< (amps/probability math/pi 0) 1e-12))
+  ;; Midpoint integration includes the solid-angle Jacobian sin(theta).
+  (let [n 1000 dt (/ math/pi n)
+        integral (* 2 math/pi dt
+                    (reduce + (for [i (range n) :let [t (* (+ i 0.5) dt)]]
+                                (* (amps/probability t 0) (math/sin t)))))]
+    (is (< (abs (- integral (/ (* 4 math/pi) 3))) 1e-5))))
+
+(defn spec [geometry]
+  {:collection "Test Physics"
+   :materials {:blue {:color [0.1 0.2 0.8 1]}}
+   :objects [{:id :physics/surface :mesh geometry :material :blue :location [1 2 3]}]})
+
+(deftest scene-reconciliation
+  (let [active (obj/object)
+        selection (vec (.-selected_objects bpy/context))
+        first-result (scene/ensure-scene! (spec geo/plane))
+        surface (get (:objects first-result) :physics/surface)
+        pointer (.as_pointer surface)
+        mesh-count (count bpy.data/meshes)
+        material-count (count bpy.data/materials)]
+    (is (= active (obj/object)))
+    (is (= selection (vec (.-selected_objects bpy/context))))
+    (obj/name! surface "User renamed this")
+    (dotimes [_ 3]
+      (let [result (scene/ensure-scene! (spec geo/cube))
+            updated (get (:objects result) :physics/surface)]
+        (is (= pointer (.as_pointer updated)))
+        (is (= 8 (count (.-vertices (.-data updated)))))
+        (is (= 1 (count (.-materials (.-data updated)))))
+        (is (= "User renamed this" (.-name updated)))))
+    (is (= mesh-count (count bpy.data/meshes)))
+    (is (= material-count (count bpy.data/materials)))
+    (is (= surface (-> surface (obj/location! [3 2 1]) (obj/scale! [2 2 2]))))
+    (is (= surface (mat/assign! surface (get (:materials first-result) :blue))))
+    (is (= 1 (count (.-materials (.-data surface)))))
+    (let [before (.as_pointer (.-data surface))]
+      (is (throws? #(scene/ensure-scene! (spec {:vertices [[0 0 0]] :faces [[0 1 2]]}))))
+      (is (= before (.as_pointer (.-data surface)))))
+    (is (throws? #(scene/ensure-scene! (update (spec geo/plane) :objects
+                                             (fn [xs] (conj xs (first xs)))))))
+    (let [coll (:collection first-result)
+          manual (mesh/create! "Unmanaged" geo/plane coll)]
+      (scene/ensure-scene! {:collection "Test Physics" :objects []})
+      (is (= 2 (count (.-objects coll))))
+      (scene/ensure-scene! {:collection "Test Physics" :objects [] :prune? true})
+      (is (= 1 (count (.-objects coll))))
+      (is (= manual (first (.-objects coll))))
+      (obj/delete! manual))))
+
+(deftest shared-mesh-and-collection-safety
+  (let [original (mesh/create! "Shared original" geo/plane)
+        shared (.new bpy.data/objects "Shared copy" (.-data original))]
+    (.link (.-objects (.-collection bpy/context)) shared)
+    (mesh/replace! original geo/cube)
+    (is (= 4 (count (.-vertices (.-data shared)))))
+    (obj/delete! original)
+    (is (= 4 (count (.-vertices (.-data shared)))))
+    (obj/delete! shared))
+  (let [coll (.new bpy.data/collections "Unowned")]
+    (is (throws? #(scene/ensure-scene! {:collection "Unowned" :objects []})))
+    (.remove bpy.data/collections coll)))
+
+(deftest amps-reevaluation
+  (let [a (amps/show! {:theta-segments 8 :phi-segments 16})
+        north (get (:objects a) :polarized)
+        pointer (.as_pointer north)
+        before (apply max (map #(aget (.-co %) 2) (.-vertices (.-data north))))
+        b (amps/show! {:radius-scale 4 :theta-segments 12 :phi-segments 24})
+        updated (get (:objects b) :polarized)]
+    (is (= pointer (.as_pointer updated)))
+    (is (= 3 (count (.-objects (:collection b)))))
+    (let [after (apply max (map #(aget (.-co %) 2) (.-vertices (.-data updated))))]
+      (is (< (abs (- (* 2 before) after)) 1e-6)))
+    (doseq [object (vals (:objects b))]
+      (is (not (.validate (.-data object)))))
+    (scene/ensure-scene! {:collection "AMPS" :objects [] :prune? true})))
+
+(deftest grid-adapter-and-interop
+  (let [theta [0 (/ math/pi 2) math/pi]
+        phi [0 (/ math/pi 2) math/pi (* 1.5 math/pi) (* 2 math/pi)]
+        grid {:theta theta :phi phi :values (mapv (fn [t] (mapv #(amps/probability t %) phi)) theta)}
+        geometry (amps-data/grid->mesh grid {:radius-scale 2})]
+    (is (= 6 (count (:vertices geometry))))
+    (is (= 8 (count (:faces geometry))))
+    (is (= [0.0 0.0 2.0] (first (:vertices geometry))))
+    (is (throws? #(amps-data/grid->mesh (assoc-in grid [:values 1 0] -0.1))))
+    (is (throws? #(amps-data/grid->mesh (assoc-in grid [:values 1 4] 0.9))))
+    (is (throws? #(amps-data/grid->mesh (assoc grid :phi [0 1 2])))))
+  (is (= :missing (interop/get {} :absent :missing)))
+  (is (= 3 (interop/get-in {:a [{:b 3}]} [:a 0 :b])))
+  (is (nil? (interop/get-in {:a nil} [:a] :missing)))
+  (is (= {:b :trap} (interop/get-in {} [:a :b] {:b :trap})))
+  (is (= 0 (interop/get-in (obj/object "Cube") ["location" 0]))))
+
+(deftest legacy-and-helpers
+  (let [a (obj/add! :type :plane :name "Collision")
+        b (obj/add! :type :plane :name "Collision")]
+    (is (not= (.as_pointer a) (.as_pointer b)))
+    (is (not= (.-name a) (.-name b)))
+    (is (= a (obj/name-mesh! "Renamed" a)))
+    (obj/select a)
+    (obj/deselect a)
+    (is (not (.select_get a)))
+    (obj/delete! a)
+    (obj/delete! b))
+  (let [active (obj/object) area (light/area! {}) data (.-data area)]
+    (is (= active (obj/object)))
+    (is (= "AREA" (.-type data)))
+    (obj/delete! area)
+    (.remove bpy.data/lights data))
+  (let [camera (obj/object "Camera")]
+    (is (= camera (camera/set-camera camera [1 2 3] [0 0 0])))))
+
+(deftest upstream-amps-reference
+  (let [grid (amps-data/read-json "tests/fixtures/amps_spin1_stretched.json")]
+    (doseq [i (range (count (:theta grid))) j (range (count (:phi grid)))]
+      (is (< (abs (- (get-in grid [:values i j])
+                     (amps/probability (get-in grid [:theta i]) (get-in grid [:phi j])))) 1e-12)))
+    (geo/validate! (amps-data/grid->mesh grid)))
+  (let [grid (amps-data/read-json "tests/fixtures/amps_spin1_coherent.json")
+        geometry (amps-data/grid->mesh grid)
+        ;; theta=pi/2, phi=pi/2, in a mesh with a single vertex at the north pole.
+        point (get-in geometry [:vertices (+ 1 (* 3 16) 4)])]
+    (is (< (abs (first point)) 1e-12))
+    (is (< (abs (- (second point) (get-in grid [:values 4 4]))) 1e-12))
+    (is (< (abs (nth point 2)) 1e-12))
+    (is (> (abs (- (get-in grid [:values 4 0]) (get-in grid [:values 4 4]))) 0.01))))
+
+(deftest scoped-pruning-and-reset
+  (let [result (scene/ensure-scene! (spec geo/plane))
+        object (get (:objects result) :physics/surface)
+        coll (:collection result)
+        outside (.new bpy.data/collections "Shared outside")]
+    (.link (.-children (.-collection (scene/scene))) outside)
+    (.link (.-objects outside) object)
+    (let [reset (scene/ensure-scene! {:collection "Test Physics"
+                                     :objects [{:id :physics/surface :mesh geo/plane}]})
+          object (get (:objects reset) :physics/surface)]
+      (is (= [0.0 0.0 0.0] (vec (.-location object))))
+      (is (zero? (count (.-materials (.-data object))))))
+    (scene/ensure-scene! {:collection "Test Physics" :objects [] :prune? true})
+    (is (zero? (count (.-objects coll))))
+    (is (= object (first (.-objects outside))))
+    (obj/delete! object)
+    (.remove bpy.data/collections outside)))
+
+(deftest symbolic-equations
+  (is (< (abs (- ((expression/compile (expression/read-data "(+ 1e-12 1/2)")) 0 0)
+                 0.500000000001)) 1e-15))
+  (is (throws? #(expression/read-data "#python/object []")))
+  (is (throws? #(expression/read-data "1 2")))
+  (let [f (expression/compile '(* a (expt (sin theta) 2)) {:parameters {'a 0.5}})]
+    (is (< (abs (- (f (/ math/pi 2) 0) 0.5)) 1e-12)))
+  (is (< (abs (- ((expression/compile '(** (Cos (* 1/2 SEIT/th)) 4)) 1 2)
+                 (amps/probability 1 2))) 1e-12))
+  (is (< (abs (- ((expression/compile '(/ Pi 2)) 0 0) (/ math/pi 2))) 1e-12))
+  (is (< (abs (- ((expression/compile '(* (exp (* I phi)) (exp (* (- I) phi)))) 1 2) 1)) 1e-12))
+  (is (throws? #(expression/compile '(python/eval "1+1"))))
+  (is (throws? #(expression/compile '(sin theta phi))))
+  (is (throws? #(expression/compile '(+ theta unknown))))
+  (is (throws? #(expression/compile 'theta {:parameters {'theta 3}})))
+  (is (throws? #((expression/compile '(Complex 0 1)) 0 0)))
+  (is (throws? #((expression/compile '(exp 10000)) 0 0)))
+  (is (throws? #(amps-data/expression->mesh '-1)))
+  (is (throws? #(amps-data/expression->mesh 1 {:radius-scale -1}))))
+
+(deftest frozen-emmy-agrees-with-upstream
+  (let [forms (edn/read-string (slurp "tests/fixtures/amps_expressions.edn"))]
+    (doseq [[id path] [[:stretched "tests/fixtures/amps_spin1_stretched.json"]
+                       [:coherent "tests/fixtures/amps_spin1_coherent.json"]]
+            :let [grid (amps-data/read-json path)
+                  f (expression/compile (get forms id))]]
+      (doseq [i (range (count (:theta grid))) j (range (count (:phi grid)))]
+        (is (< (abs (- (f (get-in grid [:theta i]) (get-in grid [:phi j]))
+                       (get-in grid [:values i j]))) 1e-12)))
+      (let [a (amps-data/grid->mesh grid)
+            b (amps-data/expression->mesh (get forms id) {:theta-segments 8 :phi-segments 16})]
+        (is (= (:faces a) (:faces b)))
+        (is (= (count (:vertices a)) (count (:vertices b))))
+        (doseq [[va vb] (map vector (:vertices a) (:vertices b))]
+          (is (every? #(< (abs %) 1e-12) (map - va vb))))))
+    (doseq [theta [0 0.4 1.2 math/pi] phi [0 1 3 6]]
+      (is (< (abs (- ((expression/compile (:mixed forms)) theta phi) (/ 1 3))) 1e-12))
+      (is (< (abs (- ((expression/compile (:aligned forms)) theta phi)
+                     (* 0.5 (math/pow (math/sin theta) 2)))) 1e-12)))))
+
+(deftest radial-color-palette
+  ;; Published Viridis endpoint colors converted to Blender linear RGB.
+  (is (every? #(< (abs %) 1e-12)
+              (map - (color/sample :viridis 0)
+                   [0.057951026987292716 0.00037724458204334364 0.08865737704420198 1.0])))
+  (is (= (color/sample :viridis 0) (color/sample :viridis -1)))
+  (is (= (color/sample :viridis 1) (color/sample :viridis 2)))
+  (is (= (color/sample :viridis 1) (color/sample :viridis_r 0)))
+  (is (throws? #(color/radius-settings {:range [1 1]})))
+  (is (throws? #(color/radius-settings {:origin [0 math/nan 0]})))
+  (is (throws? #(color/radius-settings {:colormap :not-a-colormap}))))
+
+(deftest radial-material-reconciliation
+  (let [spec {:radius-color {:colormap :viridis :range [0 2] :origin [1 2 3]}}
+        material (mat/ensure! "Radius shader test" spec)
+        pointer (.as_pointer material)
+        tree (.-node_tree material)
+        nodes (.-nodes tree)
+        artist-node (.new nodes "ShaderNodeMath")
+        count-before (count nodes)]
+    (dotimes [_ 3]
+      (is (= pointer (.as_pointer (mat/ensure! "Radius shader test" spec))))
+      (is (= count-before (count nodes))))
+    (let [coords (.get nodes "Radius: object coordinates")
+          offset (.get nodes "Radius: subtract origin")
+          length (.get nodes "Radius: length")
+          normalize (.get nodes "Radius: shared range")
+          ramp (.-color_ramp (.get nodes "Radius: colormap"))]
+      (is (nil? (.-object coords)))
+      (is (= "Object" (.-name (.-from_socket (first (.-links (aget (.-inputs offset) 0)))))))
+      (is (= [1.0 2.0 3.0] (vec (.-default_value (aget (.-inputs offset) 1)))))
+      (is (= "LENGTH" (.-operation length)))
+      (is (.-clamp normalize))
+      (is (= 2.0 (.-default_value (.get (.-inputs normalize) "From Max"))))
+      (is (= 32 (count (.-elements ramp))))
+      (is (every? #(< (abs %) 1e-7)
+                  (map - (vec (.-color (aget (.-elements ramp) 0))) (color/sample :viridis 0)))))
+    (mat/ensure! "Radius shader test" {:radius-color {:colormap :plasma :range [1 4]}})
+    (is (= count-before (count nodes)))
+    (is (= 4.0 (.-default_value (.get (.-inputs (.get nodes "Radius: shared range")) "From Max"))))
+    (mat/ensure! "Radius shader test" {:color [0.4 0.2 0.1 1]})
+    (is (empty? (filter #(.get % "fawltypoly.radius-node" false) nodes)))
+    (is (not (.-is_linked (.get (.-inputs (.get nodes "Principled BSDF")) "Base Color"))))
+    (is (some #(= artist-node %) nodes))
+    (.remove bpy.data/materials material)))
+
+(deftest radial-description-validation
+  (let [counts [(count bpy.data/objects) (count bpy.data/meshes) (count bpy.data/materials)]
+        spec {:collection "Invalid radius color"
+              :materials {:bad {:radius-color {:range [2 1]}}}
+              :objects [{:id :test :mesh geo/cube :material :bad}]}]
+    (is (throws? #(scene/ensure-scene! spec)))
+    (is (nil? (.get bpy.data/collections "Invalid radius color")))
+    (is (= counts [(count bpy.data/objects) (count bpy.data/meshes) (count bpy.data/materials)]))))
+
+(defn close-vector? [a b]
+  (every? #(< (abs %) 1e-6) (map - a b)))
+
+(defn rotated-z [rotation]
+  (vec (.__matmul__ (.to_matrix (mathutils/Euler (python/tuple rotation) "XYZ"))
+                    (mathutils/Vector #py [0 0 1]))))
+
+(deftest field-frames
+  (doseq [normal [[0 0 1] [0 0 -1] [1 0 0] [-1 0 0] [0 1 0] [0 -1 0] [1 2 3] [0 0 1e-320]]]
+    (let [{:keys [x y z]} (spatial/frame normal)]
+      (is (close-vector? z (rotated-z (spatial/euler normal))))
+      (is (< (abs (spatial/dot x z)) 1e-12))
+      (is (close-vector? (spatial/cross x y) z))))
+  (is (throws? #(spatial/frame [0 0 0]))))
+
+(deftest circular-placement
+  (let [objects (mapv (fn [i] {:id (keyword (str "p" i)) :mesh geo/plane :rotation [0.1 0.2 0.3]}) (range 4))
+        fixed (layout/circular objects {:radius 2 :phase (/ math/pi 2)})
+        center [1 2 3] normal (spatial/unit [1 2 3])
+        tilted (layout/circular objects {:center center :normal normal :radius 4 :orientation :radial})]
+    (is (close-vector? [0 2 0] (:location (first fixed))))
+    (is (= [0.1 0.2 0.3] (:rotation (first fixed))))
+    (is (= (mapv :id objects) (mapv :id tilted)))
+    (doseq [object tilted
+            :let [delta (spatial/add (:location object) (spatial/scale center -1))]]
+      (is (< (abs (- (spatial/magnitude delta) 4)) 1e-12))
+      (is (< (abs (spatial/dot delta normal)) 1e-12))
+      (is (close-vector? (spatial/unit delta) (rotated-z (:rotation object)))))
+    (is (throws? #(layout/circular objects {:angles [0 1]})))
+    (is (throws? #(layout/circular objects {:normal [0 0 0]})))
+    (is (throws? #(layout/circular objects {:radius -1}))))
+  (is (= [] (layout/circular [] {}))))
+
+(deftest paired-layout
+  (let [optical [{:id :optical/a} {:id :optical/b}]
+        atomic [{:id :atomic/a} {:id :atomic/b}]
+        rings (layout/paired-rings optical atomic {:optical-radius 5 :atomic-radius 3
+                                                  :normal [1 0 0] :angles [0 1]
+                                                  :optical-orientation :radial :atomic-orientation :normal})]
+    (doseq [[o a] (map vector (:optical rings) (:atomic rings))]
+      (is (close-vector? (spatial/unit (:location o)) (spatial/unit (:location a)))))
+    (is (close-vector? [1 0 0] (rotated-z (:rotation (first (:atomic rings))))))
+    (is (throws? #(layout/paired-rings optical [] {})))
+    (is (throws? #(layout/paired-rings optical optical {})))
+    (is (throws? #(layout/paired-rings optical atomic {:optical-radius 3 :atomic-radius 3})))))
+
+(deftest vector-arrow-topology
+  (let [geometry (geo/arrow {:length 2})
+        edges (mapcat (fn [face] (map (comp vec sort) (partition 2 1 (conj face (first face))))) (:faces geometry))
+        arrow (layout/field-vector :B [1 2 3] {:origin [2 0 1] :length 2})]
+    (is (every? #(= 2 %) (vals (frequencies edges))))
+    (is (close-vector? (spatial/unit [1 2 3]) (rotated-z (:rotation arrow))))
+    (is (= 2.0 (apply max (map #(nth % 2) (:vertices geometry)))))
+    (is (throws? #(geo/arrow {:length 0.1 :head-length 0.2})))))
+
+(deftest paired-scene-reevaluation
+  (let [options {:surface-count 4 :theta-segments 8 :phi-segments 16}
+        a (circular/show! options)
+        pointer (.as_pointer (get (:objects a) :optical/0))
+        field-pointer (.as_pointer (get (:objects a) :field/B))
+        b (circular/show! (assoc options :surface-count 3 :normal [1 2 3] :field-direction [1 0 0]))]
+    (is (= 13 (count (:objects b))))
+    (is (= 13 (count (.-objects (:collection b)))))
+    (is (= pointer (.as_pointer (get (:objects b) :optical/0))))
+    (is (= field-pointer (.as_pointer (get (:objects b) :field/B))))
+    (is (close-vector? [1 0 0] (rotated-z (vec (.-rotation_euler (get (:objects b) :atomic/0))))))
+    (doseq [object (vals (:objects b))] (is (not (.validate (.-data object)))))
+    (scene/ensure-scene! {:collection "AMPS paired rings" :objects [] :prune? true})))
+
+(deftest compass-presentation
+  (let [options {:surface-count 2 :theta-segments 8 :phi-segments 16 :compass-style :procedural}
+        a (circular/show! options)
+        shell (get (:objects a) "compass/shell")
+        pointer (.as_pointer shell)
+        b (circular/show! (assoc options :compass-radius 1.8 :center [1 2 3] :normal [1 0 0]))
+        updated (get (:objects b) "compass/shell")]
+    (is (= pointer (.as_pointer updated)))
+    (is (= [1.0 2.0 3.0] (vec (.-location updated))))
+    (let [radius (apply max (map #(.-length (.-co %)) (.-vertices (.-data updated))))]
+      (is (< (abs (- 1.8 radius)) 1e-6)))
+    (doseq [id ["compass/equator" "compass/meridian-x" "compass/meridian-y"]]
+      (is (= [1.0 2.0 3.0] (vec (.-location (get (:objects b) id))))))
+    (let [hidden (circular/show! (assoc options :compass? false))]
+      (is (= 7 (count (.-objects (:collection hidden)))))
+      (is (not (contains? (:objects hidden) "compass/shell"))))
+    (is (throws? #(layout/compass-sphere "compass" {:radius -1})))
+    (scene/ensure-scene! {:collection "AMPS paired rings" :objects [] :prune? true})))
+
+(deftest material-opacity
+  (let [material (mat/ensure! "Compass opacity test" {:opacity 0.04})
+        bsdf (.get (.-nodes (.-node_tree material)) "Principled BSDF")]
+    (is (< (abs (- 0.04 (.-default_value (.get (.-inputs bsdf) "Alpha")))) 1e-6))
+    (mat/ensure! "Compass opacity test" {})
+    (is (= 1.0 (.-default_value (.get (.-inputs bsdf) "Alpha"))))
+    (is (throws? #(mat/ensure! "Compass opacity test" {:opacity -1})))
+    (is (throws? #(mat/ensure! "Compass opacity test" {:opacity math/nan})))
+    (.remove bpy.data/materials material)))
+
+(deftest original-compass-assets
+  (let [spec {:collection "Native compass test"
+              :objects (layout/poster-compass "native" {:direction [1 2 3] :radius 1.7})}
+        a (scene/ensure-scene! spec)
+        north (get (:objects a) "native/north")
+        south (get (:objects a) "native/south")
+        shell (get (:objects a) "native/shell")
+        pointer (.as_pointer north)
+        data-pointer (.as_pointer (.-data north))
+        shell-material (aget (.-materials (.-data shell)) 0)
+        mesh-count (count bpy.data/meshes)
+        material-count (count bpy.data/materials)]
+    (is (pos? (apply max (map #(aget (.-co %) 2) (.-vertices (.-data north))))))
+    (is (neg? (apply min (map #(aget (.-co %) 2) (.-vertices (.-data south))))))
+    (is (.get (.-nodes (.-node_tree shell-material)) "Transparent BSDF"))
+    (is (.get (.-nodes (.-node_tree shell-material)) "Mix Shader"))
+    (doseq [object [north south]]
+      (is (.get (.-nodes (.-node_tree (aget (.-materials (.-data object)) 0))) "Diffuse BSDF")))
+    (dotimes [_ 3]
+      (let [b (scene/ensure-scene! spec) updated (get (:objects b) "native/north")]
+        (is (= pointer (.as_pointer updated)))
+        (is (= data-pointer (.as_pointer (.-data updated))))))
+    (is (= mesh-count (count bpy.data/meshes)))
+    (is (= material-count (count bpy.data/materials)))
+    (scene/ensure-scene! (assoc-in spec [:objects 2 :asset-opacity] 0.02))
+    (let [custom (aget (.-materials (.-data shell)) 0)]
+      (is (not= (.as_pointer shell-material) (.as_pointer custom)))
+      (is (< (abs (- 0.02 (.-default_value (aget (.-inputs (.get (.-nodes (.-node_tree custom)) "Mix Shader")) 0)))) 1e-6)))
+    (scene/ensure-scene! spec)
+    (is (= shell-material (aget (.-materials (.-data shell)) 0)))
+    (is (= material-count (count bpy.data/materials)))
+    (scene/ensure-scene! (assoc-in spec [:objects 2 :material] nil))
+    (is (zero? (count (.-materials (.-data shell)))))
+    (scene/ensure-scene! spec)
+    (is (= shell-material (aget (.-materials (.-data shell)) 0)))
+    (scene/ensure-scene! (assoc-in spec [:objects 2 :asset-opacity] 0.03))
+    (scene/ensure-scene! (assoc spec :objects [] :prune? true))
+    (is (= material-count (count bpy.data/materials))))
+  (is (throws? #(scene/ensure-scene! {:collection "Invalid native asset"
+                                     :objects [{:id :bad :asset "missing"}]})))
+  (is (nil? (.get bpy.data/collections "Invalid native asset"))))
+
+(deftest actual-vmag-equations
+  (let [dataset (vmag/load-dataset)]
+    (is (= [:polar-0 :polar-45 :polar-90] (mapv :id (:cases dataset))))
+    (doseq [case (:cases dataset)]
+      (is (= :matched (get-in case [:reference :status])))
+      (is (< (get-in case [:reference :max-abs-difference]) 1e-9)))
+    (doseq [state (concat (:optical dataset) (mapcat :atomic (:cases dataset)))
+            :let [f (expression/compile (:expression state))]]
+      (doseq [[theta phi expected] (:probes state)]
+        (is (< (abs (- (f theta phi) expected)) 1e-10))))
+    (is (throws? #(vmag/validate! (assoc dataset :frame :field-z))))
+    (is (throws? #(vmag/field-case dataset :unknown)))))
+
+(deftest actual-vmag-lab-frame
+  (let [options {:theta-segments 8 :phi-segments 16}
+        a (vmag/scene-spec :polar-0 options)
+        b (vmag/scene-spec :polar-45 options)
+        c (vmag/scene-spec :polar-90 options)
+        surface? #(and (keyword? (:id %)) (#{"optical" "atomic"} (namespace (:id %))))
+        surfaces (fn [spec] (filterv surface? (:objects spec)))]
+    (is (close-vector? [0 0 1] (get-in a [:vmag :field-direction])))
+    (is (close-vector? [1 0 0] (get-in c [:vmag :field-direction])))
+    (doseq [spec [a b c] object (surfaces spec)]
+      (is (= [0 0 0] (:rotation object))))
+    (is (= (mapv :location (surfaces a)) (mapv :location (surfaces c))))
+    (is (= (:mesh (first (surfaces a))) (:mesh (first (surfaces c)))))
+    (let [atomic-mesh (fn [spec] (:mesh (first (filter #(= :atomic/0 (:id %)) (:objects spec)))))]
+      (is (not= (atomic-mesh a) (atomic-mesh b)))
+      (is (not= (atomic-mesh a) (atomic-mesh c)))))
+  (let [options {:theta-segments 8 :phi-segments 16}
+        first (vmag/show! :polar-0 options)
+        object (get (:objects first) :atomic/0)
+        pointer (.as_pointer object)
+        mesh-count (count bpy.data/meshes)
+        material-count (count bpy.data/materials)]
+    (doseq [id [:polar-45 :polar-90]]
+      (let [updated (vmag/show! id options)]
+        (is (= pointer (.as_pointer (get (:objects updated) :atomic/0))))
+        (is (= mesh-count (count bpy.data/meshes)))
+        (is (= material-count (count bpy.data/materials)))))
+    (scene/ensure-scene! {:collection "AMPS paired rings" :objects [] :prune? true})))
+
+(deftest actual-vmag-conditional-normalization
+  (let [dataset (vmag/load-dataset)
+        options {:theta-segments 8 :phi-segments 16}
+        raw (vmag/scene-spec dataset :polar-45 (assoc options :normalize-ground? false))
+        conditional (vmag/scene-spec dataset :polar-45 options)
+        population (:trace (first (:atomic (vmag/field-case dataset :polar-45))))
+        object (fn [spec] (first (filter #(= :atomic/0 (:id %)) (:objects spec))))]
+    (is (= :ground-population (get-in raw [:vmag :normalization])))
+    (is (= :conditional-ground (get-in conditional [:vmag :normalization])))
+    (is (= conditional (vmag/scene-spec dataset :polar-45 (assoc options :normalize-ground? true))))
+    (is (= (:faces (:mesh (object raw))) (:faces (:mesh (object conditional)))))
+    (doseq [[a b] (map vector (:vertices (:mesh (object raw))) (:vertices (:mesh (object conditional))))]
+      (is (every? #(< (abs %) 1e-10) (map - (map #(/ % population) a) b))))
+    (is (= :ground-population (:normalization dataset)))
+    (is (throws? #(vmag/scene-spec dataset :polar-45 (assoc options :normalize-ground? :yes))))))

@@ -1,0 +1,96 @@
+(ns fawltypoly.vmag
+  "Actual SEIT/Qas AMPS equations in the laboratory frame, arranged at beam azimuths."
+  (:require [fawltypoly.amps :as amps]
+            [fawltypoly.expression :as expression]
+            [fawltypoly.geometry :as geo]
+            [fawltypoly.layout :as layout]
+            [fawltypoly.scene :as scene])
+  (:import math pathlib fawltypoly))
+
+(defn validate!
+  [{:keys [format frame normalization beam-azimuths optical cases] :as dataset}]
+  (when-not (and (= format "fawltypoly.vmag/1") (= frame :lab-z)
+                (= normalization :ground-population)
+                (vector? beam-azimuths) (pos? (count beam-azimuths))
+                (every? #(and (geo/finite? %) (<= 0 %) (< % (* 2 math/pi))) beam-azimuths)
+                (every? (fn [[a b]] (< a b)) (partition 2 1 beam-azimuths))
+                (vector? optical) (= (count optical) (count beam-azimuths))
+                (vector? cases) (pos? (count cases))
+                (= (count cases) (count (set (map :id cases)))))
+    (throw (ex-info "Expected a lab-frame VMAG equation bundle with matching azimuths" {})))
+  (doseq [case cases]
+    (let [{:keys [Bmag Bpolar Bazimuth]} (:params case)]
+      (when-not (and (keyword? (:id case)) (every? geo/finite? [Bmag Bpolar Bazimuth])
+                    (<= 0 Bmag) (<= 0 Bpolar math/pi)
+                    (vector? (:atomic case)) (= (count optical) (count (:atomic case))))
+        (throw (ex-info "Invalid VMAG field case" {:id (:id case)})))))
+  (doseq [state (concat optical (mapcat :atomic cases))]
+    (when-not (and (map? state) (contains? state :expression)
+                  (geo/finite? (:trace state)) (< 0 (:trace state) 1.00000001))
+      (throw (ex-info "Invalid VMAG AMPS state" {}))))
+  dataset)
+
+(defn load-dataset
+  "Read the bundled calculation or an EDN export produced by resources/export_vmag.clj."
+  ([] (validate! (expression/read-data (.read_text (.joinpath (.-parent (pathlib/Path fawltypoly/__file__))
+                                                       "data" "vmag_field_angles.edn")))))
+  ([path] (validate! (expression/read-data (slurp path)))))
+
+(def ^:private bundled (delay (load-dataset)))
+
+(defn field-case
+  [dataset id]
+  (or (some #(when (= (:id %) (if (string? id) (keyword id) id)) %) (:cases dataset))
+      (throw (ex-info "Unknown VMAG field case" {:id id :available (mapv :id (:cases dataset))}))))
+
+(defn scene-spec
+  "Place actual optical/atomic equations at their sampled beam azimuths.
+   Both surface rotations remain identity: the equations already use lab +Z.
+   Ring positions do not rotate the physical states. Field angles come from the
+   calculation, not from a presentation override. Ground-manifold AMPS are
+   normalized conditionally by default; set :normalize-ground? false to retain
+   their overall ground-state population."
+  ([id] (scene-spec @bundled id {}))
+  ([id options] (scene-spec @bundled id options))
+  ([dataset id {:keys [collection center optical-radius atomic-radius radius-scale theta-segments phi-segments colormap normalize-ground?]
+               :or {center [0 0 0] optical-radius 4.8 atomic-radius 3 radius-scale 1.2
+                    theta-segments 24 phi-segments 48 colormap :viridis collection "AMPS paired rings" normalize-ground? true}}]
+   (validate! dataset)
+   (when-not (boolean? normalize-ground?) (throw (ex-info "normalize-ground? must be a boolean" {})))
+   (let [case (field-case dataset id)
+         {:keys [Bpolar Bazimuth]} (:params case)
+         direction [(* (math/sin Bpolar) (math/cos Bazimuth))
+                    (* (math/sin Bpolar) (math/sin Bazimuth)) (math/cos Bpolar)]
+         descriptions (fn [group states]
+                        (mapv (fn [i state]
+                                {:id (keyword group (str i)) :name (str group " phi=" (nth (:beam-azimuths dataset) i))
+                                 :mesh (amps/expression->mesh (if (and normalize-ground? (= group "atomic"))
+                                                               (list '/ (:expression state) (:trace state))
+                                                               (:expression state))
+                                                               {:radius-scale radius-scale :theta-segments theta-segments
+                                                                :phi-segments phi-segments})
+                                 :rotation [0 0 0] :material :radius :smooth? true})
+                              (range (count states)) states))
+         rings (layout/paired-rings (descriptions "optical" (:optical dataset))
+                                    (descriptions "atomic" (:atomic case))
+                                    {:center center :normal [0 0 1] :reference [1 0 0]
+                                     :angles (:beam-azimuths dataset) :orientation :fixed
+                                     :optical-radius optical-radius :atomic-radius atomic-radius})]
+     {:collection collection :prune? true
+      :vmag {:case (:id case) :params (:params case) :source (:source dataset)
+             :reference (:reference case) :field-direction direction :frame :lab-z
+             :normalization (if normalize-ground? :conditional-ground (:normalization dataset))
+             :ground-populations (mapv :trace (:atomic case)) :beam-azimuths (:beam-azimuths dataset)
+             :radius-scale radius-scale}
+      :materials {:radius {:radius-color {:colormap colormap :range [0 radius-scale]} :roughness 0.55}
+                  :guide {:color [0.12 0.14 0.17 1] :roughness 0.6}}
+      :objects (vec (concat (:optical rings) (:atomic rings)
+                            [(layout/ring-guide :guide/optical {:center center :radius optical-radius :material :guide})
+                             (layout/ring-guide :guide/atomic {:center center :radius atomic-radius :material :guide})]
+                            (layout/poster-compass "compass" {:center center :direction direction :normal [0 0 1]
+                                                              :radius 1.624 :length 2.8})))})))
+
+(defn show!
+  ([id] (scene/ensure-scene! (scene-spec id)))
+  ([id options] (scene/ensure-scene! (scene-spec id options)))
+  ([dataset id options] (scene/ensure-scene! (scene-spec dataset id options))))

@@ -1,0 +1,5 @@
+{:paths ["."]
+ :deps {org.clojure/clojure {:mvn/version "1.11.1"}
+        org.mentat/emmy-viewers {:mvn/version "0.3.2"}
+        io.github.nextjournal/clerk {:mvn/version "0.14.919"}}
+ :aliases {:run {:main-opts ["-m" "run"]}}}
