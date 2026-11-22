@@ -9,9 +9,19 @@ a ready-to-open scene, and a preview for continuing on another computer.
 ## Handoff status — 22 November 2026
 
 - The animation and library extensions are implemented and tested.
+- Coils use a fully metallic copper finish with fine surface grain and no
+  activation glow. Beam brightness is a three-dimensional Gaussian volume field,
+  with a 1/e² waist radius of 0.9 and illustrative Rayleigh range of 6 units.
+- Each cooling beam has a circular-polarization glyph in its transverse plane,
+  a rotating electric-field arrow, and a Cartesian Jones-vector label. A fixed
+  XYZ compass shows the lab frame. Rotation is slowed to 0.5 Hz for readability.
 - `assets/mot.blend` contains the complete **480-frame, 24 fps, 20-second** animation.
   It plays without Python dependencies, Basilisp, drivers or frame handlers.
-- `assets/preview.mp4` is a completed **640×360, 6 fps Cycles preview**.
+- `assets/preview.mp4` is the earlier **640×360, 6 fps Cycles preview**, retained
+  as a reference for the flat beams and original coil finish. The `.blend` and
+  `overview.png` show the updated copper and Gaussian volume lighting.
+- `assets/polarization-preview.mp4` is a **four-second, 640×360, 12 fps Cycles clip**
+  of the trapped stage, showing two complete electric-field arrow rotations.
 - The requested higher-quality 24 fps render was **cancelled at the user's request**.
   No completed higher-quality MP4 exists yet. Rendering is not running.
 - Agreed next render size: **1280×720**, not 1920×1080. The last selected quality
@@ -26,7 +36,7 @@ a ready-to-open scene, and a preview for continuing on another computer.
 If transferring the supplied Git bundle rather than fetching from the remote:
 
 ```sh
-git clone --branch codex/mot-project /path/to/mot-project.bundle fawltypoly
+git clone --branch main /path/to/mot-project.bundle fawltypoly
 cd fawltypoly
 # Optional: restore the normal upstream remote after cloning the bundle.
 git remote set-url origin git@github.com:light-matters/fawltypoly.git
@@ -145,19 +155,56 @@ are retimed for cooling and eased into randomly scattered destinations. The
 central population stays within the common overlap of the three beam cylinders;
 outer paths pass outside that overlap. Capture fraction, atom sizes and timing
 are presentation choices. Beam colours identify axes, not optical frequencies.
-Transparent emissive envelopes show the illuminated region without modelling
-light scattering in vacuum. Six arrows show counter-propagating light directions.
-Polarization, repumping, level structure and quantitative temperature are omitted.
+Gaussian volume emission shows the illuminated region without modelling light
+scattering in vacuum. Intensity falls as `exp(-2 r² / w(z)²)` across each beam;
+its waist widens along the axis, and its centre intensity decreases accordingly.
+The displayed ends fade smoothly. The three beam pairs share one volume to avoid
+intersecting-medium artifacts; six arrows show counter-propagating directions.
+Polarization is illustrated geometrically; optical pumping, repumping, level
+dynamics and quantitative temperature are omitted.
 
 The magnetic guides indicate a quadrupole field proportional to `[x,y,-2z]`, with
 zero at the centre; they are not inward force arrows. Light and the magnetic
 gradient jointly provide MOT confinement. The final cloud is disordered, not a
 lattice, and atoms retain motion.
 
+## Lab-frame polarization convention
+
+The labels show normalized Cartesian Jones vectors using
+`E(t) = Re[epsilon exp(-i omega t)]`, with `x,y,z` the fixed lab unit vectors:
+
+| Propagation | Jones vector epsilon |
+| --- | --- |
+| +X | `(y + i z) / sqrt(2)` |
+| -X | `(y - i z) / sqrt(2)` |
+| +Y | `(z + i x) / sqrt(2)` |
+| -Y | `(z - i x) / sqrt(2)` |
+| +Z | `(x - i y) / sqrt(2)` |
+| -Z | `(x + i y) / sqrt(2)` |
+
+The example assumes a type-I `F -> F+1` transition with positive excited-state
+g-factor and the displayed `B ∝ (x,y,-2z)` gradient. Radial pairs have positive
+helicity and the axial pair negative helicity, defined by
+`Im(epsilon* cross epsilon) dot k`. Counter-propagating beams have conjugate
+Jones vectors in the same lab basis. Overall optical phase is arbitrary.
+Reversing the field gradient requires reversing the polarization convention;
+other transitions can need different choices. See
+[Tarbutt, magneto-optical trapping forces (2015)](https://arxiv.org/abs/1409.0244).
+
+The glyph's circle and tangential arrow show the rotation sense; its radial arrow
+shows E in the transverse plane. The animation is a slowed marker at a fixed
+position, not optical-frequency motion or a propagating wave simulation. The
+six labels avoid assigning a universal sigma+/sigma- label: those transition
+labels refer to a chosen atomic quantization axis, which varies with B here.
+The preset and its labels are in `polarizations.py`; reusable Jones-vector and
+glyph helpers are in `fawltypoly.quantum-optics.api.v1`.
+
 ## Verification and known limitation
 
 ```sh
 .venv/bin/python -m unittest tests/test_mot_motion.py
+.venv/bin/python -m unittest tests/test_gaussian_beams.py
+.venv/bin/python -m unittest tests/test_mot_polarizations.py
 .venv/bin/python tests/run_blender.py --suite animation
 .venv/bin/python tests/run_blender.py --suite demos
 ```

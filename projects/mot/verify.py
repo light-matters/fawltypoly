@@ -34,8 +34,37 @@ def verify():
     assert all(objects[f"string:beam/{axis}/{sign}"].hide_render
                for axis in range(3) for sign in (-1, 1))
     at(8)
-    assert all(not objects[f"string:beam/{axis}/{sign}"].hide_render
-               for axis in range(3) for sign in (-1, 1))
+    polarized = [obj for obj in collection.objects if 'mot.polarization-k' in obj]
+    if polarized:
+        from mathutils import Vector
+        assert len(polarized) == 6
+        for obj in polarized:
+            k = Vector(obj['mot.polarization-k'])
+            real = Vector(obj['mot.polarization-real'])
+            imag = Vector(obj['mot.polarization-imag'])
+            assert abs(real.length_squared + imag.length_squared - 1) < 1e-6
+            assert abs(real.dot(k)) < 1e-6 and abs(imag.dot(k)) < 1e-6
+            assert abs(2 * real.cross(imag).dot(k) - obj['mot.polarization-helicity']) < 1e-6
+            assert not obj.hide_render
+            direction = obj.rotation_euler.to_matrix() @ Vector((0, 0, 1))
+            assert abs(direction.dot(k)) < 1e-6
+        at(2)
+        assert all(obj.hide_render for obj in polarized)
+        at(8)
+    if 'string:beam-volume' in objects:
+        volume = objects['string:beam-volume']
+        assert not volume.hide_render
+        assert volume.data.materials[0].node_tree.nodes.get('Gaussian emission') is not None
+        copper = objects['string:coil/-1/0'].data.materials[0]
+        bsdf = next(n for n in copper.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+        assert bsdf.inputs['Metallic'].default_value == 1
+        assert bsdf.inputs['Emission Strength'].default_value == 0
+        at(2)
+        assert volume.hide_render
+        at(8)
+    else:
+        assert all(not objects[f"string:beam/{axis}/{sign}"].hide_render
+                   for axis in range(3) for sign in (-1, 1))
     assert objects["string:gradient/0"].hide_render
     at(18)
     assert not objects["string:gradient/0"].hide_render
@@ -45,7 +74,8 @@ def verify():
     at(1)
     assert end_positions == at(18)
     assert all(not obj.animation_data or not obj.animation_data.drivers for obj in scene.objects)
-    print(f"PASS: standalone Cycles MOT, {len(atoms)} instanced atoms, cooling, capture and scrubbing", flush=True)
+    print(f"PASS: standalone Cycles MOT, {len(atoms)} instanced atoms, cooling, capture, "
+          f"{len(polarized)} lab-frame polarization markers and scrubbing", flush=True)
 
 
 if __name__ == "__main__":

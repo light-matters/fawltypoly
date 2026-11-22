@@ -2,7 +2,8 @@
   "Qualitative MOT storyboard: baked paths, not an atomic physics simulation."
   (:require [fawltypoly.api.v1 :as fp]
             [fawltypoly.quantum-optics.api.v1 :as qo])
-  (:import math [projects.mot.motion :as motion]))
+  (:import math [projects.mot.motion :as motion]
+           [projects.mot.polarizations :as polarization]))
 
 (def collection-name "MOT demonstration")
 (def beam-colors [[0.95 0.12 0.22 1] [0.08 0.65 0.95 1] [0.56 0.22 1 1]])
@@ -18,7 +19,7 @@
    {:collection collection-name :prune? true
       :materials {:atom {:color [1 0.73 0.25 1] :roughness 0.24
                          :emission-color [1 0.5 0.12 1] :emission-strength 1.8}
-                  :copper {:color [0.48 0.17 0.065 1] :metallic 0.75 :roughness 0.27}
+                  :copper {:color [0.64 0.20 0.095 1] :metallic 1 :roughness 0.23}
                   :field {:color [0.1 0.95 0.65 1] :emission-strength 0.7}
                   :beam-x {:color (nth beam-colors 0) :emission-strength 1}
                   :beam-y {:color (nth beam-colors 1) :emission-strength 1}
@@ -27,6 +28,16 @@
       (vec (concat
         (qo/atom-cloud "atom" (vec (repeat atom-count [0 0 0])) {:material :atom})
         (qo/cooling-beams "beam" {})
+        [(qo/cooling-volume "beam-volume" {})]
+        (mapcat (fn [beam]
+                  (let [axis (.-axis beam) sign (.-source_side beam)]
+                    (qo/circular-polarization-glyph (str "polarization/" axis "/" sign)
+                      {:center (assoc [0 0 0] axis (* sign 3.1))
+                       :direction (vec (.-direction beam))
+                       :reference (vec (.-reference beam))
+                       :helicity (.-helicity beam)
+                       :material (nth [:beam-x :beam-y :beam-z] axis)})))
+                (polarization/beams))
         (for [axis (range 3) sign [-1 1]]
           (assoc (fp/field-vector (str "beam-direction/" axis "/" sign)
                    (assoc [0 0 0] axis (- sign))

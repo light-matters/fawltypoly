@@ -82,3 +82,30 @@
       (is (every? #(.-is_manifold %) (.-edges data)))
       (is (< 6 (.calc_volume data ** :signed true) 7))
       (finally (.free data) (obj/delete! object)))))
+
+(deftest gaussian-cooling-light-material
+  (let [m (qo/gaussian-cooling-material! "Gaussian test" {})
+        tree (.-node_tree m)
+        count-before (count (.-nodes tree))
+        emission (.get (.-nodes tree) "Gaussian emission")
+        output (.get (.-nodes tree) "Volume output")]
+    (is (= 0 (.-default_value (.get (.-inputs emission) "Density"))))
+    (is (< (abs (- 0.16 (.-default_value (.get (.-inputs emission) "Emission Strength")))) 1e-6))
+    (is (.-is_linked (.get (.-inputs output) "Volume")))
+    (is (= m (qo/gaussian-cooling-material! "Gaussian test" {:waist 1.1})))
+    (is (= count-before (count (.-nodes tree))))
+    (is (throws? #(qo/gaussian-cooling-material! "Gaussian test" {:waist -1})))
+    (is (= count-before (count (.-nodes tree))))
+    (is (= 8 (count (:vertices (:mesh (qo/cooling-volume "volume" {}))))))
+    (.remove bpy.data/materials m)))
+
+(deftest lab-frame-polarization-data
+  (doseq [direction [[1 0 0] [-1 0 0] [0 1 0] [0 -1 0] [0 0 1] [0 0 -1] [1 2 3]]
+          helicity [-1 1]
+          :let [{:keys [real imag k]} (qo/circular-polarization direction {:helicity helicity})]]
+    (is (< (abs (spatial/dot real k)) 1e-12))
+    (is (< (abs (spatial/dot imag k)) 1e-12))
+    (is (< (abs (- 1 (+ (spatial/dot real real) (spatial/dot imag imag)))) 1e-12))
+    (is (< (abs (- helicity (* 2 (spatial/dot (spatial/cross real imag) k)))) 1e-12)))
+  (is (= 3 (count (qo/circular-polarization-glyph "pol" {:direction [1 2 3]}))))
+  (is (throws? #(qo/circular-polarization [1 0 0] {:helicity 0}))))

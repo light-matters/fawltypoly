@@ -16,8 +16,8 @@
         pointer (.as_pointer atom)
         b (mot/show! {:atom-count 6 :frames 12 :seed 19})]
     (is (= pointer (.as_pointer (get (:objects b) "atom/0"))))
-    (is (= 34 (count (:objects b))))
-    (is (= 34 (count (.-objects (:collection b)))))
+    (is (= 53 (count (:objects b))))
+    (is (= 53 (count (.-objects (:collection b)))))
     (doseq [i (range 6)]
       (is (= (.as_pointer (.-data atom))
              (.as_pointer (.-data (get (:objects b) (str "atom/" i)))))))

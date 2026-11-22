@@ -1,0 +1,13 @@
+(ns fawltypoly.quantum-optics.material
+  "Materials for illustrating atomic-optics apparatus."
+  (:import [fawltypoly.quantum_optics.materials :as support]))
+
+(defn gaussian-cooling-material!
+  "Create/update a Gaussian three-axis intensity volume in object-local display
+   units. Use a single containing mesh. :waist is the centre's 1/e² intensity
+   radius; :rayleigh-range sets longitudinal widening. Colours identify axes.
+   This is an educational visibility shader, not scattering in a vacuum."
+  [label {:keys [colors waist rayleigh-range half-length fade-length strength]
+          :or {colors [[0.95 0.12 0.22] [0.08 0.65 0.95] [0.56 0.22 1]]
+               waist 0.9 rayleigh-range 6 half-length 4.1 fade-length 0.65 strength 0.16}}]
+  (support/gaussian_cooling_material label colors waist rayleigh-range half-length fade-length strength))

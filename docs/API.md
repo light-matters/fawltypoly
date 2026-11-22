@@ -48,6 +48,10 @@ vectors; apply them with the general API's `ensure-scene!`:
 | --- | --- |
 | `atom-cloud` | prefix, positions, options: `:radius`, `:material` |
 | `cooling-beams` | prefix, options: `:center`, `:radius`, `:half-length`, `:axis-materials` |
+| `cooling-volume` | string ID, options: `:extent` (default 4.8); local-coordinate bounding mesh |
+| `gaussian-cooling-material!` | label, options: `:colors`, `:waist`, `:rayleigh-range`, `:half-length`, `:fade-length`, `:strength` |
+| `circular-polarization` | direction, options: `:reference`, `:helicity`; returns lab XYZ `:real`, `:imag`, `:k` |
+| `circular-polarization-glyph` | prefix, options: `:center`, `:direction`, `:reference`, `:helicity`, `:radius`, `:phase`, `:material` |
 | `anti-helmholtz-coils` | prefix, options: `:center`, `:normal`, `:radius`, `:separation`, `:turns`, `:wire-radius`, `:turn-spacing`, `:material` |
 | `quadrupole-guides` | prefix, options: `:center`, `:normal`, `:radial-distance`, `:axial-distance`, `:length`, `:material` |
 | AMPS adapters | `expression->mesh`, `grid->mesh`, `read-amps-json` |
@@ -57,6 +61,33 @@ apparatus; they do not compute atomic dynamics or magnetic fields. Beam pairs
 are aligned with global XYZ; coils and guides can be oriented along any normal.
 Existing AMPS exports in the general v1 API remain for compatibility; the domain
 API is the preferred entry point for new atomic-optics applications.
+
+The Gaussian material represents all three pairs in one emissive volume, avoiding
+intersecting volume boundaries. Its intensity is proportional to
+`exp(-2 r² / w(z)²) / q`, where `q = 1 + (z / rayleigh-range)²` and
+`w(z)² = waist² q`. `:waist` is the 1/e² intensity radius at the centre (default
+0.9); `:rayleigh-range` defaults to 6 display units. A smooth crop fades the ends
+between `half-length - fade-length` and `half-length` (defaults 4.1 and 0.65).
+Colours are three linear RGB triples; strength defaults to 0.16. Dimensions must
+be positive, `fade-length < half-length`, and strength nonnegative. Defaults are
+illustrative; the Rayleigh range is not derived from a wavelength.
+
+Assign this material to one `cooling-volume` mesh (or an equivalent containing
+mesh with coordinates in display units). The default extent covers the default
+ends and Gaussian tails. Larger beam parameters require a larger extent. Animate
+the `Gaussian emission` node's `Emission Strength` socket to activate the light.
+Reapplying the material replaces its nodes and shader animation. This shows
+intensity as radiance for teaching; it does not simulate vacuum scattering,
+interference, or atomic forces.
+
+Polarization uses `E(t) = Re[epsilon exp(-i omega t)]`. `circular-polarization`
+returns a normalized Cartesian Jones vector: `epsilon = real + i imag`. The
+reference vector fixes its real transverse axis. Helicity is +1 or -1, defined
+without a viewing-direction ambiguity by `Im(epsilon* cross epsilon) dot k`.
+This describes the light in fixed lab coordinates, not sigma transitions relative
+to a spatially varying magnetic field. The glyph returns three ordinary mesh
+descriptions (circle, rotation arrow, and radial electric-field arrow), oriented
+in the plane perpendicular to propagation. Default radius is 0.28 display units.
 
 ## Baked animation
 

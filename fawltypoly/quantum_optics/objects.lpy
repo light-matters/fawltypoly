@@ -3,11 +3,61 @@
    These build illustrations, not fields or atomic dynamics."
   (:require [fawltypoly.geometry :as geo]
             [fawltypoly.layout :as layout]
-            [fawltypoly.spatial :as spatial]))
+            [fawltypoly.spatial :as spatial])
+  (:import math))
 
 (defn- prefix! [prefix]
   (when-not (and (string? prefix) (not (empty? prefix)))
     (throw (ex-info "Expected a nonempty ID prefix" {}))))
+
+(defn cooling-volume
+  "One bounding mesh for a Gaussian cooling-light material. Local coordinates
+   are display units; choose extent beyond the beam ends and radial tails."
+  [id {:keys [extent] :or {extent 4.8}}]
+  (prefix! id)
+  (when-not (and (geo/finite? extent) (pos? extent))
+    (throw (ex-info "Volume extent must be positive" {})))
+  {:id id :name "Gaussian cooling light"
+   :mesh (update geo/cube :vertices #(mapv (fn [xyz] (spatial/scale xyz extent)) %))})
+
+(defn circular-polarization
+  "Normalized Jones vector in fixed lab XYZ, using exp(-i omega t).
+   :reference fixes the real transverse axis. Returns :real, :imag and :k.
+   :helicity is +/-1, defined by Im(epsilon* cross epsilon) dot k."
+  [direction {:keys [reference helicity] :or {reference [1 0 0] helicity 1}}]
+  (when-not (#{-1 1} helicity)
+    (throw (ex-info "Helicity must be +1 or -1" {})))
+  (let [{:keys [x y z]} (spatial/frame direction reference)
+        a (/ 1 (math/sqrt 2))]
+    {:real (spatial/scale x a) :imag (spatial/scale y (* a helicity)) :k z}))
+
+(defn circular-polarization-glyph
+  "Three mesh descriptions: transverse circle, rotation arrow and radial E
+   arrow. :helicity uses the circular-polarization convention; :phase is radians.
+   Directions and reference are lab XYZ, independent of the camera."
+  [prefix {:keys [center direction reference helicity radius material phase]
+           :or {center [0 0 0] direction [0 0 1] reference [1 0 0]
+                helicity 1 radius 0.28 phase 0}}]
+  (prefix! prefix)
+  (spatial/xyz! center)
+  (when-not (and (geo/finite? radius) (> radius 0) (geo/finite? phase))
+    (throw (ex-info "Invalid polarization glyph dimensions" {})))
+  (let [{:keys [real imag k]} (circular-polarization direction {:reference reference :helicity helicity})
+        field (spatial/scale (spatial/add (spatial/scale real (math/cos phase))
+                                          (spatial/scale imag (math/sin phase))) (math/sqrt 2))
+        tangent (spatial/scale (spatial/cross k field) helicity)
+        base {:shaft-radius (* radius 0.035) :head-radius (* radius 0.15)
+              :head-length (* radius 0.25) :material material}]
+    [(assoc (layout/ring-guide (str prefix "/ring")
+              {:center center :normal k :reference reference :radius radius
+               :thickness (* radius 0.025) :material material})
+            :name (str prefix " polarization circle"))
+     (assoc (layout/field-vector (str prefix "/rotation") tangent
+              (assoc base :origin (spatial/add center (spatial/scale field radius)) :length (* radius 0.5)))
+            :name (str prefix " rotation sense"))
+     (assoc (layout/field-vector (str prefix "/field") field
+              (assoc base :origin center :length radius))
+            :name (str prefix " electric field"))]))
 
 (defn atom-cloud
   "Spherical atom descriptions with explicit positions and stable IDs. Share

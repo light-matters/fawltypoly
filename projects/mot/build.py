@@ -23,13 +23,15 @@ def build(options):
     from basilisp_blender.eval import eval_str
     from fawltypoly.animation_support import bake_transforms
     from projects.mot.motion import ease, DURATION
+    from projects.mot.polarizations import beams as polarized_beams
 
     # This entry point is only called in a fresh factory-startup subprocess.
     for obj in list(bpy.data.objects):
         bpy.data.objects.remove(obj, do_unlink=True)
     frames = options["frames"]
     result = eval_str(
-        "(do (require '[projects.mot.scene :as mot] '[fawltypoly.api.v1 :as fp]) (mot/show! "
+        "(do (require '[projects.mot.scene :as mot] '[fawltypoly.api.v1 :as fp] "
+        "'[fawltypoly.quantum-optics.api.v1 :as qo]) (mot/show! "
         f"{{:atom-count {options['atoms']} :seed {options['seed']} :frames {frames}}}))"
     )
     objects = dict(result.val_at(keyword("objects")).items())
@@ -70,37 +72,46 @@ def build(options):
         material.node_tree.links.new(node.outputs[0], output.inputs["Surface"])
         return material
 
-    def beam_material(name, color):
-        material = bpy.data.materials.new(name)
-        material.use_nodes = True
-        tree = material.node_tree
-        tree.nodes.clear()
-        output = tree.nodes.new("ShaderNodeOutputMaterial")
-        transparent = tree.nodes.new("ShaderNodeBsdfTransparent")
-        # Emissive envelopes read clearly at low sample counts, without the
-        # coincident volume-boundary artifacts of six intersecting media.
-        light = tree.nodes.new("ShaderNodeEmission")
-        light.inputs["Color"].default_value = (*color, 1)
-        light.inputs["Strength"].default_value = 1
-        mix = tree.nodes.new("ShaderNodeMixShader")
-        strength = mix.inputs[0]
-        for time, value in [(0, 0), (4, 0), (5, 0.045), (DURATION, 0.045)]:
-            strength.default_value = value
-            strength.keyframe_insert(data_path="default_value", frame=frame(time))
-        tree.links.new(transparent.outputs[0], mix.inputs[1])
-        tree.links.new(light.outputs[0], mix.inputs[2])
-        tree.links.new(mix.outputs[0], output.inputs["Surface"])
-        return material
-
     axis_colors = [(0.95, 0.12, 0.22), (0.08, 0.65, 0.95), (0.56, 0.22, 1.0)]
-    for axis, color in enumerate(axis_colors):
-        material = beam_material(f"Cooling light {'XYZ'[axis]}", color)
+    material = eval_str('(qo/gaussian-cooling-material! "Gaussian cooling light" {})')
+    volume = objects['beam-volume']
+    volume.data.materials.clear()
+    volume.data.materials.append(material)
+    visibility(volume, 4)
+    activation = material.node_tree.nodes['Gaussian emission'].inputs['Emission Strength']
+    for time, value in [(0, 0), (4, 0), (5, 0.16), (DURATION, 0.16)]:
+        activation.default_value = value
+        activation.keyframe_insert(data_path='default_value', frame=frame(time))
+    for axis in range(3):
         for sign in (-1, 1):
             obj = objects[f"beam/{axis}/{sign}"]
-            obj.data.materials.clear()
-            obj.data.materials.append(material)
-            visibility(obj, 4)
+            # Keep addressable apparatus geometry as wire guides. The single
+            # Gaussian field supplies all rendered light, without cylinder caps.
+            obj.hide_render = True
+            obj.hide_viewport = True
+            obj['mot.beam-proxy'] = True
             visibility(objects[f"beam-direction/{axis}/{sign}"], 4)
+
+    for beam in polarized_beams():
+        prefix = f'polarization/{beam.axis}/{beam.source_side}'
+        for part in ('ring', 'rotation', 'field'):
+            visibility(objects[f'{prefix}/{part}'], 4)
+        field = objects[f'{prefix}/field']
+        field['mot.polarization-k'] = beam.direction
+        field['mot.polarization-real'] = [v.real for v in beam.jones]
+        field['mot.polarization-imag'] = [v.imag for v in beam.jones]
+        field['mot.polarization-helicity'] = beam.helicity
+        samples = []
+        previous = None
+        for f in range(1, frames + 1):
+            time = (f - 1) / (frames - 1) * DURATION
+            phase = math.tau * 0.5 * max(0, time - 4)
+            rotation = Vector(beam.field(phase)).to_track_quat('Z', 'Y').to_euler()
+            if previous is not None:
+                rotation.make_compatible(previous)
+            samples.append((f, None, tuple(rotation), None))
+            previous = rotation.copy()
+        bake_transforms(field, samples)
 
     # Magnetic field is represented schematically, never as an inward B field.
     for name, obj in objects.items():
@@ -110,11 +121,22 @@ def build(options):
                                  for t, s in [(0, 0.001), (11, 0.001), (12, 1), (20, 1)]])
     copper = materials[keyword("copper")]
     bsdf = next(n for n in copper.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
-    bsdf.inputs["Emission Color"].default_value = (1, 0.19, 0.035, 1)
-    for time, strength in [(0, 0), (11, 0), (12, 0.45), (20, 0.45)]:
-        socket = bsdf.inputs["Emission Strength"]
-        socket.default_value = strength
-        socket.keyframe_insert(data_path="default_value", frame=frame(time))
+    # Bare copper reflects the studio lights; current does not make it glow.
+    bsdf.inputs['Emission Strength'].default_value = 0
+    anisotropy = bsdf.inputs.get('Anisotropic IOR Level')
+    if anisotropy is not None:
+        anisotropy.default_value = 0.3
+    tree = copper.node_tree
+    grain = tree.nodes.new('ShaderNodeTexNoise')
+    grain.name = 'Fine copper grain'
+    grain.inputs['Scale'].default_value = 180
+    grain.inputs['Detail'].default_value = 2
+    bump = tree.nodes.new('ShaderNodeBump')
+    bump.name = 'Copper microfinish'
+    bump.inputs['Strength'].default_value = 0.08
+    bump.inputs['Distance'].default_value = 0.005
+    tree.links.new(grain.outputs['Fac'], bump.inputs['Height'])
+    tree.links.new(bump.outputs['Normal'], bsdf.inputs['Normal'])
 
     camera_data = bpy.data.cameras.new("MOT camera")
     camera = bpy.data.objects.new("MOT camera", camera_data)
@@ -130,6 +152,7 @@ def build(options):
     muted = emission("Type / muted", (0.32, 0.44, 0.59))
     mint = emission("Type / field", (0.15, 0.95, 0.66))
     gold = emission("Type / atoms", (1, 0.62, 0.2))
+    axis_ink = [emission(f"Legend {'XYZ'[i]}", color) for i, color in enumerate(axis_colors)]
 
     def text(label, x, y, size=0.18, material=white, start=0, end=DURATION + 1, align="LEFT"):
         data = bpy.data.curves.new(label, "FONT")
@@ -163,12 +186,37 @@ def build(options):
         text(label, x, 3.20, 0.115, muted)
         text("______", x, 3.07, 0.15, gold if i < 2 else mint, start=start, end=end)
     for axis, color in enumerate(axis_colors):
-        mat = emission(f"Legend {'XYZ'[axis]}", color)
-        text(f"{'XYZ'[axis]} pair", 4.7, 1.9 - axis * 0.30, 0.17, mat, start=4)
+        text(f"{'XYZ'[axis]} pair", 4.7, 1.9 - axis * 0.30, 0.17, axis_ink[axis], start=4)
     text("red-detuned light\ncolours identify axes", 4.7, 0.82, 0.13, muted, start=4)
     text("B = 0", 0.65, -0.10, 0.16, mint, start=11)
     text("gradient guides", 4.7, -0.12, 0.15, mint, start=11)
     text("not force arrows", 4.7, -0.37, 0.13, muted, start=11)
+
+    text('POLARIZATION / LAB XYZ', -6.1, 1.55, 0.17, start=4)
+    for row, beam in enumerate(polarized_beams()):
+        text(beam.label, -6.1, 1.12 - row * 0.42, 0.155, axis_ink[beam.axis], start=4)
+    text('E(t) = Re[ε exp(-iωt)]', -6.1, -1.60, 0.14, muted, start=4)
+    text('E rotation slowed for visibility', -6.1, -1.86, 0.13, muted, start=4)
+    text('Type-I example; B ∝ (x,y,-2z)', -6.1, -2.12, 0.12, muted, start=4)
+
+    text('LAB FRAME', 4.7, -0.92, 0.14, muted, start=4)
+    compass_origin = target + right * 5.1 - up * 1.85 + toward * 8
+    compass_mesh = eval_str('(fp/arrow {:length 0.65 :shaft-radius 0.015 :head-radius 0.055 :head-length 0.14})')
+    for axis, label in enumerate('XYZ'):
+        direction = Vector(tuple(1 if i == axis else 0 for i in range(3)))
+        data = bpy.data.meshes.new(f'Lab {label} arrow')
+        data.from_pydata(list(compass_mesh.val_at(keyword('vertices'))), [],
+                         list(compass_mesh.val_at(keyword('faces'))))
+        data.materials.append(axis_ink[axis])
+        arrow = bpy.data.objects.new(f'Lab +{label}', data)
+        presentation.objects.link(arrow)
+        arrow.location = compass_origin
+        arrow.rotation_euler = direction.to_track_quat('Z', 'Y').to_euler()
+        arrow['mot.lab-axis'] = label
+        visibility(arrow, 4)
+        offset = direction * 0.80
+        text(label.lower(), 5.1 + offset.dot(right), -1.85 + offset.dot(up),
+             0.16, axis_ink[axis], start=4, align='CENTER')
 
     # Opposite current-direction cues, attached to the two physical coils.
     for side in (-1, 1):
@@ -233,14 +281,30 @@ def build(options):
         light.location = location
         light.rotation_euler = (target - light.location).to_track_quat("-Z", "Y").to_euler()
     scene.world.use_nodes = True
-    scene.world.node_tree.nodes["Background"].inputs["Color"].default_value = (0.008, 0.014, 0.03, 1)
-    scene.world.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.35
+    world = scene.world.node_tree
+    world.nodes.clear()
+    camera_background = world.nodes.new('ShaderNodeBackground')
+    camera_background.name = 'Dark camera background'
+    camera_background.inputs['Color'].default_value = (0.008, 0.014, 0.03, 1)
+    camera_background.inputs['Strength'].default_value = 0.35
+    studio = world.nodes.new('ShaderNodeBackground')
+    studio.name = 'Neutral studio reflections'
+    studio.inputs['Color'].default_value = (0.11, 0.11, 0.11, 1)
+    studio.inputs['Strength'].default_value = 0.7
+    ray = world.nodes.new('ShaderNodeLightPath')
+    mix = world.nodes.new('ShaderNodeMixShader')
+    output = world.nodes.new('ShaderNodeOutputWorld')
+    world.links.new(ray.outputs['Is Camera Ray'], mix.inputs[0])
+    world.links.new(studio.outputs[0], mix.inputs[1])
+    world.links.new(camera_background.outputs[0], mix.inputs[2])
+    world.links.new(mix.outputs[0], output.inputs['Surface'])
     scene.render.engine = "CYCLES"
     scene.cycles.device = "CPU"
     scene.cycles.samples = options["samples"]
     scene.cycles.use_denoising = True
     scene.cycles.max_bounces = 6
     scene.cycles.transparent_max_bounces = 24
+    scene.cycles.volume_step_rate = 0.5
     scene.render.resolution_x = options["width"]
     scene.render.resolution_y = round(options["width"] * 9 / 16)
     scene.render.resolution_percentage = 100
