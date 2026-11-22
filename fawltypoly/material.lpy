@@ -33,7 +33,7 @@
 
 (defn validate!
   "Validate a material description, including its optional radius-color map."
-  [{:keys [color roughness metallic radius-color opacity]
+  [{:keys [color roughness metallic radius-color opacity emission-color emission-strength]
     :or {color [0.2 0.45 0.8 1] roughness 0.45 metallic 0} :as spec}]
   (when-not (and (map? spec) (= 4 (count color))
                 (every? #(and (geo/finite? %) (<= 0 % 1)) color)
@@ -41,6 +41,13 @@
     (throw (ex-info "Invalid material color or surface values" {})))
   (when (and (contains? spec :opacity) (not (and (geo/finite? opacity) (<= 0 opacity 1))))
     (throw (ex-info "Material opacity must be between zero and one" {})))
+  (when (and (contains? spec :emission-color)
+             (not (and (= 4 (count emission-color))
+                       (every? #(and (geo/finite? %) (<= 0 % 1)) emission-color))))
+    (throw (ex-info "Emission color must be linear RGBA in 0..1" {})))
+  (when (and (contains? spec :emission-strength)
+             (not (and (geo/finite? emission-strength) (<= 0 emission-strength))))
+    (throw (ex-info "Emission strength must be finite and nonnegative" {})))
   (when (contains? spec :radius-color)
     (when-not (map? radius-color) (throw (ex-info "radius-color must be a map" {})))
     (color/radius-settings radius-color))
@@ -94,8 +101,9 @@
   "Create/update a Principled material. Color is linear RGBA. Optional
    :radius-color maps object-local distance from :origin through a clamped
    :range and Matplotlib :colormap (default Viridis). :opacity controls Principled
-   Alpha (0 transparent, 1 opaque), defaulting to the color's alpha component."
-  [label {:keys [color roughness metallic radius-color]
+   Alpha (0 transparent, 1 opaque), defaulting to the color's alpha component.
+   :emission-color defaults to color; :emission-strength defaults to zero."
+  [label {:keys [color roughness metallic radius-color emission-color emission-strength]
           :or {color [0.2 0.45 0.8 1] roughness 0.45 metallic 0} :as spec}]
   (validate! spec)
   (let [m (or (.get (available) label) (.new (available) label))]
@@ -106,7 +114,9 @@
         (throw (ex-info "Material has no Principled BSDF node" {:material label})))
       (clear-radius-nodes! nodes)
       (doseq [[socket value] [["Base Color" color] ["Roughness" roughness] ["Metallic" metallic]
-                              ["Alpha" (get spec :opacity (nth color 3))]]]
+                              ["Alpha" (get spec :opacity (nth color 3))]
+                              ["Emission Color" (or emission-color color)]
+                              ["Emission Strength" (or emission-strength 0)]]]
         (set! (.-default_value (.get (.-inputs bsdf) socket)) value))
       (when radius-color (radius-nodes! (.-node_tree m) bsdf radius-color)))
     (set! (.-diffuse_color m) (assoc color 3 (get spec :opacity (nth color 3))))

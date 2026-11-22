@@ -23,8 +23,9 @@ presets are application code and have their own lifecycle.
 | Purpose | Public names under `fp/` |
 | --- | --- |
 | Scene reconciliation | `ensure-scene!` |
+| Baked animation and instances | `bake-transforms!`, `share-mesh!` |
 | Mesh data and validation | `plane`, `cube`, `validate-mesh!`, `finite?` |
-| Surface geometry | `parametric-surface`, `radial-surface`, `radial-grid`, `arrow` |
+| Surface geometry | `parametric-surface`, `radial-surface`, `radial-grid`, `arrow`, `cylinder` |
 | AMPS adapters | `expression->mesh`, `grid->mesh`, `read-amps-json` |
 | Symbolic data | `read-data`, `read-expression`, `compile-expression` |
 | Layout descriptions | `circular`, `paired-rings`, `field-vector`, `ring-guide`, `compass-sphere`, `poster-compass` |
@@ -35,6 +36,53 @@ for their underlying namespaces. Layout and geometry functions return data;
 `ensure-scene!` is the boundary that applies scene descriptions to Blender.
 The reusable compass meshes are shipped with the library; no VMAG data or
 calculation is required to load them.
+
+## General and domain layers
+
+`fawltypoly.api.v1` provides context-independent geometry, scenes and animation.
+Atomic/quantum-optics objects live in `fawltypoly.quantum-optics.api.v1`, with the
+same additive v1 compatibility policy. Its functions return scene-description
+vectors; apply them with the general API's `ensure-scene!`:
+
+| Domain export | Arguments and main options |
+| --- | --- |
+| `atom-cloud` | prefix, positions, options: `:radius`, `:material` |
+| `cooling-beams` | prefix, options: `:center`, `:radius`, `:half-length`, `:axis-materials` |
+| `anti-helmholtz-coils` | prefix, options: `:center`, `:normal`, `:radius`, `:separation`, `:turns`, `:wire-radius`, `:turn-spacing`, `:material` |
+| `quadrupole-guides` | prefix, options: `:center`, `:normal`, `:radial-distance`, `:axial-distance`, `:length`, `:material` |
+| AMPS adapters | `expression->mesh`, `grid->mesh`, `read-amps-json` |
+
+Prefixes are nonempty strings and scope stable IDs. These functions illustrate
+apparatus; they do not compute atomic dynamics or magnetic fields. Beam pairs
+are aligned with global XYZ; coils and guides can be oriented along any normal.
+Existing AMPS exports in the general v1 API remain for compatibility; the domain
+API is the preferred entry point for new atomic-optics applications.
+
+## Baked animation
+
+`(fp/bake-transforms! object samples options)` accepts an object/name and ordered
+samples such as `[{:frame 1 :location [0 0 0]} {:frame 24 :location [1 0 0]}]`.
+Each sample needs a finite `:frame` and at least one finite XYZ `:location`,
+`:rotation` (XYZ Euler radians), or `:scale`. Frames must increase strictly.
+Rotation tracks require the object's XYZ Euler mode. All samples are validated
+before mutation. The optional `:interpolation` is `:linear` (default), `:constant`
+or `:bezier`. Supplied transform channels are replaced over their entire range;
+other channels remain. Omitted transforms at individual samples do not add keys.
+Shared actions are copied before modification. Returns the object. Blender
+runtime errors are not transactional; run mutations on Blender's main thread.
+
+`(fp/share-mesh! prototype targets)` makes existing mesh objects share the
+prototype's mesh, materials and shading; independent transforms and animation
+are retained. Returns resolved targets. This is explicit instancing after scene
+reconciliation: repeat it after `ensure-scene!`, which replaces described meshes.
+
+`(fp/cylinder {:radius 1 :depth 1 :segments 32})` returns a closed cylinder from
+local z=0 to z=depth. Dimensions must be positive and finite; segments at least 3.
+
+Scene materials additionally accept `:emission-color` (linear RGBA, defaults to
+`:color`) and `:emission-strength` (finite, nonnegative, defaults to zero). Updating
+a material without emission options resets its emission. The illustrative MOT
+uses these general material controls for atoms and activation cues.
 
 ## Data conventions
 

@@ -5,6 +5,7 @@ The Poetry and Blender interpreters must have matching Python major/minor versio
 """
 
 import os
+import argparse
 from pathlib import Path
 import subprocess
 import sys
@@ -15,18 +16,27 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     if "--" not in sys.argv:
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument("--api-only", action="store_true")
+        parser.add_argument("--suite", choices=("core", "animation", "demos"))
+        args = parser.parse_args()
+        if args.api_only and args.suite == "demos":
+            parser.error("--suite demos cannot be combined with --api-only")
         env = dict(os.environ, ALSOFT_DRIVERS="null")
         return subprocess.run(
             ["blender", "--background", "--factory-startup", "--python-exit-code", "1",
              "--python", str(Path(__file__).resolve()), "--",
              *(["--api-only"] if "--api-only" in sys.argv else []),
+             *([f"--suite={args.suite}"] if args.suite else []),
              sysconfig.get_paths()["purelib"], f"{sys.version_info.major}.{sys.version_info.minor}"],
             cwd=ROOT, env=env, check=False,
         ).returncode
 
     arguments = sys.argv[sys.argv.index("--") + 1:]
     api_only = "--api-only" in arguments
-    site_packages, expected_version = [arg for arg in arguments if arg != "--api-only"]
+    selected_suite = next((arg.split("=", 1)[1] for arg in arguments if arg.startswith("--suite=")), None)
+    site_packages, expected_version = [arg for arg in arguments
+                                       if arg != "--api-only" and not arg.startswith("--suite=")]
     actual_version = f"{sys.version_info.major}.{sys.version_info.minor}"
     if actual_version != expected_version:
         raise RuntimeError(f"Use Python {actual_version} for Poetry; Blender uses it, but Poetry uses {expected_version}")
@@ -34,15 +44,24 @@ def main():
     from basilisp.lang.keyword import keyword
     from basilisp_blender.eval import eval_file, eval_str
 
-    suites = [("tests/test_core.lpy", "fawltypoly.test-core")]
+    suites = [("tests/test_core.lpy", "fawltypoly.test-core"),
+              ("tests/test_animation.lpy", "fawltypoly.test-animation")]
     if not api_only:
         suites.append(("tests/test_demos.lpy", "fawltypoly.test-demos"))
+    if selected_suite:
+        suites = [(path, namespace) for path, namespace in suites
+                  if namespace == f"fawltypoly.test-{selected_suite}"]
+    if selected_suite == "demos":
+        eval_file(str(ROOT / "tests/test_core.lpy"))
     results = {}
     for path, namespace in suites:
         eval_file(str(ROOT / path))
         suite = eval_str(f"""(into {{}} (for [[sym v] (ns-interns '{namespace})
                                             :when (:basilisp.test/test (meta v))]
-                                        [sym ((deref v))]))""")
+                                        [sym (do (python/print (str "Checking " sym) ** :flush true)
+                                               (try ((deref v))
+                                                  (catch Exception e
+                                                    {{:failures [{{:type :error :message (str e)}}]}})))]))""")
         results.update(suite.items())
     if len(results) == 0:
         raise AssertionError("No Blender integration tests were discovered")

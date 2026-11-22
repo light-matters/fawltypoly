@@ -25,6 +25,20 @@
               [-1 -1 1] [1 -1 1] [1 1 1] [-1 1 1]]
    :faces [[3 2 1 0] [4 5 6 7] [0 1 5 4] [1 2 6 5] [2 3 7 6] [3 0 4 7]]})
 
+(defn cylinder
+  "Closed cylinder along local +Z, from z=0 to depth. Suitable for beam volumes."
+  [{:keys [radius depth segments] :or {radius 1 depth 1 segments 32}}]
+  (when-not (and (every? finite? [radius depth]) (pos? radius) (pos? depth)
+                (integer? segments) (>= segments 3))
+    (throw (ex-info "Invalid cylinder dimensions" {})))
+  (validate!
+    {:vertices (vec (for [z [0 depth] i (range segments)
+                         :let [a (* 2 math/pi (/ i segments))]]
+                     [(* radius (math/cos a)) (* radius (math/sin a)) z]))
+     :faces (into [(vec (reverse (range segments))) (vec (range segments (* 2 segments)))]
+                  (for [i (range segments) :let [j (mod (inc i) segments)]]
+                    [i j (+ j segments) (+ i segments)]))}))
+
 (defn parametric-surface
   "Sample f(u,v)->[x y z]. Wrapped directions omit the duplicate seam endpoint.
    Degenerate poles/nodes are not welded by this general sampler."

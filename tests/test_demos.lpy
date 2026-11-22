@@ -6,8 +6,22 @@
             [fawltypoly.layout :as layout]
             [demo.amps :as amps]
             [demo.circular :as circular]
+            [projects.mot.scene :as mot]
             [demo.vmag.plot :as vmag])
   (:import bpy math))
+
+(deftest mot-reevaluation
+  (let [a (mot/show! {:atom-count 8 :frames 24})
+        atom (get (:objects a) "atom/0")
+        pointer (.as_pointer atom)
+        b (mot/show! {:atom-count 6 :frames 12 :seed 19})]
+    (is (= pointer (.as_pointer (get (:objects b) "atom/0"))))
+    (is (= 34 (count (:objects b))))
+    (is (= 34 (count (.-objects (:collection b)))))
+    (doseq [i (range 6)]
+      (is (= (.as_pointer (.-data atom))
+             (.as_pointer (.-data (get (:objects b) (str "atom/" i)))))))
+    (scene/ensure-scene! {:collection mot/collection-name :objects [] :prune? true})))
 
 (deftest amps-reevaluation
   (let [a (amps/show! {:theta-segments 8 :phi-segments 16})

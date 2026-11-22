@@ -1,0 +1,86 @@
+(ns fawltypoly.quantum-optics.objects
+  "Atomic-optics apparatus descriptions. All dimensions are display units.
+   These build illustrations, not fields or atomic dynamics."
+  (:require [fawltypoly.geometry :as geo]
+            [fawltypoly.layout :as layout]
+            [fawltypoly.spatial :as spatial]))
+
+(defn- prefix! [prefix]
+  (when-not (and (string? prefix) (not (empty? prefix)))
+    (throw (ex-info "Expected a nonempty ID prefix" {}))))
+
+(defn atom-cloud
+  "Spherical atom descriptions with explicit positions and stable IDs. Share
+   their mesh after reconciliation with the general API's share-mesh!."
+  [prefix positions {:keys [radius material] :or {radius 0.043}}]
+  (prefix! prefix)
+  (when-not (and (geo/finite? radius) (pos? radius))
+    (throw (ex-info "Atom radius must be positive" {})))
+  (doseq [xyz positions] (spatial/xyz! xyz))
+  (let [sphere (geo/radial-surface (fn [t p] 1) {:theta-segments 6 :phi-segments 10})]
+    (mapv (fn [i xyz]
+            (cond-> {:id (str prefix "/" i) :name (str "Atom " i) :mesh sphere
+                     :location xyz :scale [radius radius radius] :smooth? true}
+              material (assoc :material material))) (range (count positions)) positions)))
+
+(defn cooling-beams
+  "Six closed beam cylinders, three counter-propagating pairs aimed at :center.
+   Cylinder IDs are prefix/axis/sign (axis 0,1,2; sign -1,1). :axis-materials
+   optionally supplies three material IDs. The descriptions do not encode
+   detuning, polarization, scattering forces or a physical intensity profile."
+  [prefix {:keys [center radius half-length axis-materials]
+           :or {center [0 0 0] radius 1.3 half-length 4.1}}]
+  (prefix! prefix)
+  (spatial/xyz! center)
+  (when (and axis-materials (not= 3 (count axis-materials)))
+    (throw (ex-info "Expected three axis material IDs" {})))
+  (let [cylinder (geo/cylinder {:radius radius :depth half-length :segments 32})]
+    (vec (for [axis (range 3) sign [-1 1]
+               :let [direction (assoc [0 0 0] axis (- sign))]]
+           (cond-> {:id (str prefix "/" axis "/" sign)
+                    :name (str "Cooling beam " axis " " sign) :mesh cylinder
+                    :location (spatial/add center (assoc [0 0 0] axis (* sign half-length)))
+                    :rotation (spatial/euler direction)}
+             axis-materials (assoc :material (nth axis-materials axis)))))))
+
+(defn anti-helmholtz-coils
+  "Two coaxial coil illustrations centred on :center, along :normal. Opposite
+   current directions must be indicated by the presentation; no field is solved.
+   :separation is centre-to-centre; :turn-spacing places toroidal winding rings."
+  [prefix {:keys [center normal radius separation turns wire-radius turn-spacing material]
+           :or {center [0 0 0] normal [0 0 1] radius 2.12 separation 3.2
+                turns 5 wire-radius 0.055 turn-spacing 0.072}}]
+  (prefix! prefix)
+  (spatial/xyz! center)
+  (when-not (and (integer? turns) (pos? turns)
+                (every? geo/finite? [separation turn-spacing])
+                (pos? separation) (pos? turn-spacing))
+    (throw (ex-info "Invalid coil separation, turns or spacing" {})))
+  (let [axis (spatial/unit normal)]
+    (vec (for [side [-1 1] winding (range turns)
+               :let [offset (+ (* side (/ separation 2))
+                               (* (- winding (/ (dec turns) 2)) turn-spacing))]]
+           (assoc (layout/ring-guide (str prefix "/" side "/" winding)
+                    {:center (spatial/add center (spatial/scale axis offset)) :normal normal
+                     :radius radius :thickness wire-radius :material material})
+                  :name (str "Anti-Helmholtz coil " side " winding " winding))))))
+
+(defn quadrupole-guides
+  "Six schematic arrows indicating B proportional to [x,y,-2z] in the local
+   coil frame. All arrows have equal display length, not field magnitude."
+  [prefix {:keys [center normal radial-distance axial-distance length material]
+           :or {center [0 0 0] normal [0 0 1] radial-distance 1.35 axial-distance 1 length 0.58}}]
+  (prefix! prefix)
+  (spatial/xyz! center)
+  (when-not (and (every? geo/finite? [radial-distance axial-distance length])
+                (every? pos? [radial-distance axial-distance length]))
+    (throw (ex-info "Guide dimensions must be positive" {})))
+  (let [{:keys [x y z]} (spatial/frame normal)]
+    (mapv (fn [i [axis sign distance field-sign]]
+            (layout/field-vector (str prefix "/" i) (spatial/scale axis (* sign field-sign))
+              {:origin (spatial/add center (spatial/scale axis (* sign distance)))
+               :length length :shaft-radius (* length 0.03) :head-radius (* length 0.13)
+               :head-length (* length 0.28) :material material}))
+          (range 6) [[x 1 radial-distance 1] [x -1 radial-distance 1]
+                     [y 1 radial-distance 1] [y -1 radial-distance 1]
+                     [z 1 axial-distance -1] [z -1 axial-distance -1]])))

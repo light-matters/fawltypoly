@@ -1,0 +1,54 @@
+(ns projects.mot.scene
+  "Qualitative MOT storyboard: baked paths, not an atomic physics simulation."
+  (:require [fawltypoly.api.v1 :as fp]
+            [fawltypoly.quantum-optics.api.v1 :as qo])
+  (:import math [projects.mot.motion :as motion]))
+
+(def collection-name "MOT demonstration")
+(def beam-colors [[0.95 0.12 0.22 1] [0.08 0.65 0.95 1] [0.56 0.22 1 1]])
+
+(defn atom-id [i] (str "atom/" i))
+(defn beam-id [axis sign] (str "beam/" axis "/" sign))
+
+(defn scene-spec
+  ([] (scene-spec {}))
+  ([{:keys [atom-count] :or {atom-count 144}}]
+   (when-not (and (integer? atom-count) (pos? atom-count))
+     (throw (ex-info "atom-count must be positive" {})))
+   {:collection collection-name :prune? true
+      :materials {:atom {:color [1 0.73 0.25 1] :roughness 0.24
+                         :emission-color [1 0.5 0.12 1] :emission-strength 1.8}
+                  :copper {:color [0.48 0.17 0.065 1] :metallic 0.75 :roughness 0.27}
+                  :field {:color [0.1 0.95 0.65 1] :emission-strength 0.7}
+                  :beam-x {:color (nth beam-colors 0) :emission-strength 1}
+                  :beam-y {:color (nth beam-colors 1) :emission-strength 1}
+                  :beam-z {:color (nth beam-colors 2) :emission-strength 1}}
+      :objects
+      (vec (concat
+        (qo/atom-cloud "atom" (vec (repeat atom-count [0 0 0])) {:material :atom})
+        (qo/cooling-beams "beam" {})
+        (for [axis (range 3) sign [-1 1]]
+          (assoc (fp/field-vector (str "beam-direction/" axis "/" sign)
+                   (assoc [0 0 0] axis (- sign))
+                   {:origin (assoc [0 0 0] axis (* sign 3.5))
+                    :length 0.5 :shaft-radius 0.025 :head-radius 0.11 :head-length 0.2
+                    :material (nth [:beam-x :beam-y :beam-z] axis)})
+                 :name (str "Light propagation " axis " " sign)))
+        (qo/anti-helmholtz-coils "coil" {:material :copper})
+        (qo/quadrupole-guides "gradient" {:material :field})))}))
+
+(defn show!
+  "Build/rebuild the apparatus and bake atom paths. Options: :atom-count,
+   :seed, :frames. Returns scene handles. Does not set up a camera or render.
+   Re-evaluation preserves object IDs and replaces existing location tracks."
+  ([] (show! {}))
+  ([{:keys [atom-count seed frames] :or {atom-count 144 seed 17 frames 480} :as options}]
+   ;; Generate/validate before mutating Blender.
+   (let [tracks (motion/tracks atom-count seed frames)
+         result (fp/ensure-scene! (scene-spec options))
+         atoms (mapv #(get (:objects result) (atom-id %)) (range atom-count))]
+     (fp/share-mesh! (first atoms) (vec (rest atoms)))
+     (doseq [[atom track] (map vector atoms tracks)]
+       (fp/bake-transforms! atom
+         (mapv (fn [[frame xyz]] {:frame frame :location (vec xyz)}) track)))
+     result)))

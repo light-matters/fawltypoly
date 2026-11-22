@@ -16,10 +16,19 @@ namespaces remain available for development and legacy scripts.
 
 - `fawltypoly/`: installable Blender API, geometry, symbolic expressions,
   materials, layouts and reusable compass assets.
-- `demo/`: application code and presentation presets; not part of the package.
+- `fawltypoly/quantum_optics/`: atomic/quantum-optics objects and domain API,
+  composed from the context-independent geometry and scene layer.
+- `demo/`: legacy application code and presentation presets; not part of the package.
+- `projects/mot/`: self-contained MOT animation project, source, assets and render handoff.
 - `demo/vmag/`: VMAG equations, data, exporter, verification and plotting.
 - `tests/test_core.lpy`: library and v1 compatibility checks.
 - `tests/test_demos.lpy`: application and VMAG integration checks.
+
+The [MOT animation](projects/mot/README.md) demonstrates a complete Blender/Cycles sequence:
+free atom motion, six cooling beams, coil activation and a localized cloud.
+Use `fawltypoly.api.v1` for general geometry and animation, and
+`fawltypoly.quantum-optics.api.v1` for domain apparatus. The storyboard is a
+qualitative educational animation with baked keyframes, not a physics solver.
 
 ```clojure
 (require '[fawltypoly.api.v1 :as fp])

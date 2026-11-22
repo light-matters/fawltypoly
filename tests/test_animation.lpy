@@ -1,0 +1,84 @@
+(ns fawltypoly.test-animation
+  (:require [clojure.test :refer [deftest is]]
+            [fawltypoly.api.v1 :as fp]
+            [fawltypoly.quantum-optics.api.v1 :as qo]
+            [fawltypoly.mesh :as mesh]
+            [fawltypoly.object :as obj]
+            [fawltypoly.material :as mat]
+            [fawltypoly.spatial :as spatial])
+  (:import bpy bmesh math [fawltypoly.animation_support :as support]))
+
+(defn throws? [f] (try (f) false (catch Exception _ true)))
+
+(deftest baked-track-replacement
+  (let [a (mesh/create! "Animated test" fp/cube)
+        scene (.-scene bpy/context)]
+    (set! (.-hide_render a) false)
+    (.keyframe_insert a ** :data_path "hide_render" :frame 1)
+    (fp/bake-transforms! a [{:frame 1 :location [0 0 0]} {:frame 11 :location [10 0 0]}])
+    (.frame_set scene 6)
+    (is (< (abs (- 5 (.-x (.-location a)))) 1e-6))
+    ;; Complete validation before mutation; no partial overwrite on bad input.
+    (is (throws? #(fp/bake-transforms! a [{:frame 1 :location [99 0 0]}
+                                        {:frame 1 :location [0 0 0]}])))
+    (.frame_set scene 6)
+    (is (< (abs (- 5 (.-x (.-location a)))) 1e-6))
+    (fp/bake-transforms! a [{:frame 1 :location [2 0 0]} {:frame 3 :location [4 0 0]}])
+    (.frame_set scene 2)
+    (is (< (abs (- 3 (.-x (.-location a)))) 1e-6))
+    (is (= 3 (count (filter #(= "location" (.-data_path %)) (support/action_curves a)))))
+    (doseq [curve (support/action_curves a) :when (= "location" (.-data_path curve))]
+      (is (= 2 (count (.-keyframe_points curve)))))
+    (is (= 1 (count (filter #(= "hide_render" (.-data_path %)) (support/action_curves a)))))
+    (obj/delete! a)))
+
+(deftest shared-instances-and-emission
+  (let [a (mesh/create! "Prototype" fp/cube)
+        b (mesh/create! "Instance" fp/plane)
+        m (mat/ensure! "Emission test" {:emission-color [1 0.2 0.1 1] :emission-strength 2})]
+    (mat/assign! a m)
+    (is (= [b] (fp/share-mesh! a [b])))
+    (is (= (.as_pointer (.-data a)) (.as_pointer (.-data b))))
+    (fp/bake-transforms! a [{:frame 1 :location [1 2 3]}])
+    (fp/bake-transforms! b [{:frame 1 :location [-1 0 0]}])
+    (is (not= (.as_pointer (.-action (.-animation_data a)))
+              (.as_pointer (.-action (.-animation_data b)))))
+    ;; A manually shared action must be copied before editing an instance.
+    (set! (.-action (.-animation_data b)) (.-action (.-animation_data a)))
+    (set! (.-action_slot (.-animation_data b)) (.-action_slot (.-animation_data a)))
+    (fp/bake-transforms! b [{:frame 1 :location [9 0 0]}])
+    (.frame_set (.-scene bpy/context) 1)
+    (is (= [1.0 2.0 3.0] (vec (.-location a))))
+    (is (= [9.0 0.0 0.0] (vec (.-location b))))
+    (let [bsdf (.get (.-nodes (.-node_tree m)) "Principled BSDF")]
+      (is (= 2 (.-default_value (.get (.-inputs bsdf) "Emission Strength"))))
+      (mat/ensure! "Emission test" {})
+      (is (= 0 (.-default_value (.get (.-inputs bsdf) "Emission Strength")))))
+    (is (throws? #(mat/validate! {:emission-strength -1})))
+    (obj/delete! a)
+    (is (= 6 (count (.-polygons (.-data b)))))
+    ;; cube has six faces (the prototype, not the target's former plane).
+    (obj/delete! b)
+    (.remove bpy.data/materials m)))
+
+(deftest optical-apparatus-descriptions
+  (let [beams (qo/cooling-beams "beam" {:center [1 2 3]})
+        coils (qo/anti-helmholtz-coils "coil" {:normal [1 0 0] :turns 3})
+        guides (qo/quadrupole-guides "field" {})]
+    (is (= 6 (count beams)))
+    (is (= 6 (count coils)))
+    (is (= 6 (count guides)))
+    (doseq [beam beams] (is (= (:mesh beam) (fp/validate-mesh! (:mesh beam)))))
+    (is (< (abs (- -1.1 (nth (:location (nth beams 4)) 2))) 1e-12)))
+  (is (throws? #(qo/anti-helmholtz-coils "coil" {:turns 0})))
+  (is (throws? #(qo/atom-cloud "atom" [[math/nan 0 0]] {})))
+  (is (throws? #(fp/cylinder {:radius -1}))))
+
+(deftest closed-cylinder-volume
+  (let [object (mesh/create! "Beam volume test" (fp/cylinder {:radius 1 :depth 2 :segments 16}))
+        data (bmesh/new)]
+    (try
+      (.from_mesh data (.-data object))
+      (is (every? #(.-is_manifold %) (.-edges data)))
+      (is (< 6 (.calc_volume data ** :signed true) 7))
+      (finally (.free data) (obj/delete! object)))))

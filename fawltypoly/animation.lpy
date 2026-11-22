@@ -1,0 +1,24 @@
+(ns fawltypoly.animation
+  "Baked Blender animation and explicit mesh instances. No frame handlers."
+  (:require [fawltypoly.object :as obj])
+  (:import [fawltypoly.animation_support :as support]))
+
+(defn bake-transforms!
+  "Replace supplied transform channels from ordered samples with :frame and
+   :location, :rotation and/or :scale. Rotations are XYZ Euler radians.
+   :interpolation is :linear (default), :constant or :bezier. Other channels
+   are preserved. Returns the object; use on Blender's main thread."
+  ([ref samples] (bake-transforms! ref samples {}))
+  ([ref samples {:keys [interpolation] :or {interpolation :linear}}]
+   (when-not (#{:linear :constant :bezier} interpolation)
+     (throw (ex-info "Unknown interpolation" {:interpolation interpolation})))
+   (support/bake_transforms
+     (obj/require-object ref)
+     (mapv (fn [sample] [(:frame sample) (:location sample) (:rotation sample) (:scale sample)]) samples)
+     (case interpolation :linear "LINEAR" :constant "CONSTANT" :bezier "BEZIER"))))
+
+(defn share-mesh!
+  "Make existing target objects share source mesh/materials/shading. Object
+   transforms and animation remain independent. Returns resolved targets."
+  [source targets]
+  (vec (support/share_mesh (obj/require-object source) (mapv obj/require-object targets))))
